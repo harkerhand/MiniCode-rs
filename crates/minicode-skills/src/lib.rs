@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use minicode_core::prompt::SkillSummary;
+use minicode_prompt::SkillSummary;
 
 #[derive(Debug, Clone)]
 pub struct LoadedSkill {

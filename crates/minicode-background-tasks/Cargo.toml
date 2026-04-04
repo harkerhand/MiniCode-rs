@@ -7,7 +7,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-minicode-tool = { path = "../minicode-tool" }
+minicode-tool = { workspace = true }
 tokio = { version = "1", features = ["sync"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 

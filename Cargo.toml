@@ -30,6 +30,27 @@ repository = "https://github.com/harkerhand/Minicode-rs"
 authors = ["harkerhand <harkerhand@outlook.com>"]
 
 [workspace.dependencies]
+minicode-config = { path = "crates/minicode-config" }
+minicode-core = { path = "crates/minicode-core" }
+minicode-history = { path = "crates/minicode-history" }
+minicode-install = { path = "crates/minicode-install" }
+minicode-manage = { path = "crates/minicode-manage" }
+minicode-mock-model = { path = "crates/minicode-mock-model" }
+minicode-permissions = { path = "crates/minicode-permissions" }
+minicode-prompt = { path = "crates/minicode-prompt" }
+minicode-shortcuts = { path = "crates/minicode-shortcuts" }
+minicode-skills = { path = "crates/minicode-skills" }
+minicode-agent-core = { path = "crates/minicode-agent-core" }
+minicode-mcp = { path = "crates/minicode-mcp" }
+minicode-tool = { path = "crates/minicode-tool" }
+minicode-tools-runtime = { path = "crates/minicode-tools-runtime" }
+minicode-cli-commands = { path = "crates/minicode-cli-commands" }
+minicode-types = { path = "crates/minicode-types" }
+minicode-tui = { path = "crates/minicode-tui" }
+minicode-workspace = { path = "crates/minicode-workspace" }
+minicode-background-tasks = { path = "crates/minicode-background-tasks" }
+minicode-file-review = { path = "crates/minicode-file-review" }
+
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

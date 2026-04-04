@@ -9,16 +9,9 @@ authors.workspace = true
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-minicode-agent-core = { path = "../../crates/minicode-agent-core" }
 tokio = { version = "1", features = ["full"] }
 minicode-core = { path = "../../crates/minicode-core" }
-minicode-history = { path = "../../crates/minicode-history" }
-minicode-install = { path = "../../crates/minicode-install" }
-minicode-manage = { path = "../../crates/minicode-manage" }
-minicode-mock-model = { path = "../../crates/minicode-mock-model" }
-minicode-permissions = { path = "../../crates/minicode-permissions" }
-minicode-tools-runtime = { path = "../../crates/minicode-tools-runtime" }
-minicode-tui = { path = "../../crates/minicode-tui" }
+
 serde_json = "1"
 
 [lints]

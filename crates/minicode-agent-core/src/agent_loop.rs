@@ -1,5 +1,5 @@
-use minicode_core::types::{AgentStep, ChatMessage, ModelAdapter};
 use minicode_tool::{ToolContext, ToolRegistry};
+use minicode_types::{AgentStep, ChatMessage, ModelAdapter};
 use serde_json::Value;
 
 pub trait AgentTurnCallbacks: Send {

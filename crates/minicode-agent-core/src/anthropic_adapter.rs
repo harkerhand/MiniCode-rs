@@ -4,9 +4,9 @@ use std::time::SystemTime;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use minicode_core::config::{RuntimeConfig, load_runtime_config};
-use minicode_core::types::{AgentStep, ChatMessage, ModelAdapter, StepDiagnostics, ToolCall};
+use minicode_config::{RuntimeConfig, load_runtime_config};
 use minicode_tool::ToolRegistry;
+use minicode_types::{AgentStep, ChatMessage, ModelAdapter, StepDiagnostics, ToolCall};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

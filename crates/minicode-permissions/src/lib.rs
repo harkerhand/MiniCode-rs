@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{Result, anyhow};
-use minicode_core::config::{get_active_session_context, project_session_permissions_path};
+use minicode_config::{get_active_session_context, project_session_permissions_path};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 

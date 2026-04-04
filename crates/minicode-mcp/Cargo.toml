@@ -10,8 +10,9 @@ authors.workspace = true
 anyhow = "1"
 async-trait = "0.1"
 futures = "0.3"
-minicode-core = { path = "../minicode-core" }
-minicode-tool = { path = "../minicode-tool" }
+minicode-tool = { workspace = true }
+minicode-config = { workspace = true }
+minicode-prompt = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync", "time"] }

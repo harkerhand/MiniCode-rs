@@ -8,7 +8,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use minicode_core::history::{
+use minicode_history::{
     initial_messages, initial_transcript, load_history_entries, session_id, session_start_time,
 };
 use ratatui::Terminal;
@@ -24,7 +24,7 @@ use input::{
     char_len, get_visible_commands, history_down, history_up, insert_char_at, remove_char_at,
     remove_char_before, scroll_transcript_by, toggle_tool_details,
 };
-pub use minicode_core::history::{
+pub use minicode_history::{
     init_initial_messages, init_initial_transcript, init_session_id, init_session_start_time,
 };
 pub use minicode_permissions::init_session_permissions;

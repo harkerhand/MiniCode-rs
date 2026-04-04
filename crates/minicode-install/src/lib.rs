@@ -4,7 +4,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use minicode_core::config::{
+use minicode_config::{
     MiniCodeSettings, load_effective_settings, mini_code_settings_path, save_minicode_settings,
 };
 

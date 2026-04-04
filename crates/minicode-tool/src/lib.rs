@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use jsonschema::{Draft, JSONSchema};
-use minicode_core::prompt::{McpServerSummary, SkillSummary};
 use minicode_permissions::PermissionManager;
+use minicode_prompt::{McpServerSummary, SkillSummary};
 use serde_json::Value;
 use tokio::sync::RwLock;
 

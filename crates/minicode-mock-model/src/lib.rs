@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use minicode_core::types::{AgentStep, ChatMessage, ModelAdapter, ToolCall};
+use minicode_types::{AgentStep, ChatMessage, ModelAdapter, ToolCall};
 use uuid::Uuid;
 
 pub struct MockModelAdapter;

@@ -8,9 +8,9 @@ authors.workspace = true
 
 [dependencies]
 anyhow = "1"
-minicode-core = { path = "../minicode-core" }
 minicode-skills = { path = "../minicode-skills" }
 serde_json = "1"
+minicode-config = { workspace = true }
 
 [lints]
 workspace = true

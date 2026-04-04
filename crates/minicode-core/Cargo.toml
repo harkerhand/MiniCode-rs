@@ -7,10 +7,17 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-minicode-config = { path = "../minicode-config" }
-minicode-history = { path = "../minicode-history" }
-minicode-prompt = { path = "../minicode-prompt" }
-minicode-types = { path = "../minicode-types" }
+minicode-config = { workspace = true }
+minicode-history = { workspace = true }
+minicode-prompt = { workspace = true }
+minicode-types = { workspace = true }
+minicode-install = { workspace = true }
+minicode-manage = { workspace = true }
+minicode-mock-model = { workspace = true }
+minicode-permissions = { workspace = true }
+minicode-tools-runtime = { workspace = true }
+minicode-tui = { workspace = true }
+minicode-agent-core = { workspace = true }
 
 [lints]
 workspace = true

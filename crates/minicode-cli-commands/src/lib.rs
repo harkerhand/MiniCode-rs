@@ -1,5 +1,5 @@
 use anyhow::Result;
-use minicode_core::config::{
+use minicode_config::{
     MiniCodeSettings, claude_settings_path, load_runtime_config, mini_code_mcp_path,
     mini_code_permissions_path, mini_code_settings_path, save_minicode_settings,
 };

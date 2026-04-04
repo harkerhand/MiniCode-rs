@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use minicode_core::config::{
+use minicode_config::{
     McpServerConfig, load_scoped_mcp_servers, mini_code_mcp_path, project_mcp_path,
     save_scoped_mcp_servers,
 };

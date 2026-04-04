@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use minicode_agent_core::AgentTurnCallbacks;
-use minicode_core::config::RuntimeConfig;
-use minicode_core::types::{ChatMessage, ModelAdapter, TranscriptLine};
+use minicode_config::RuntimeConfig;
 use minicode_permissions::{PermissionPromptRequest, PermissionPromptResult};
 use minicode_tool::{ToolRegistry, ToolResult};
+use minicode_types::{ChatMessage, ModelAdapter, TranscriptLine};
 use tokio::sync::{mpsc, oneshot};
 
 pub type TranscriptEntry = TranscriptLine;

@@ -8,8 +8,8 @@ authors.workspace = true
 
 [dependencies]
 anyhow = "1"
-minicode-core = { path = "../minicode-core" }
-minicode-tool = { path = "../minicode-tool" }
+minicode-config = { workspace = true }
+minicode-tool = { workspace = true }
 
 [lints]
 workspace = true

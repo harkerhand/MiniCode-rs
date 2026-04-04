@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use minicode_background_tasks::register_background_shell_task;
-use minicode_core::config::RuntimeConfig;
+use minicode_config::RuntimeConfig;
 use minicode_file_review::apply_reviewed_file_change;
 use minicode_mcp::{create_mcp_backed_tools, set_mcp_logging_enabled};
 use minicode_permissions::EnsureCommandOptions;

@@ -9,14 +9,14 @@ authors.workspace = true
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
-minicode-background-tasks = { path = "../minicode-background-tasks" }
-minicode-core = { path = "../minicode-core" }
-minicode-file-review = { path = "../minicode-file-review" }
-minicode-mcp = { path = "../minicode-mcp" }
-minicode-permissions = { path = "../minicode-permissions" }
-minicode-skills = { path = "../minicode-skills" }
-minicode-tool = { path = "../minicode-tool" }
-minicode-workspace = { path = "../minicode-workspace" }
+minicode-background-tasks = { workspace = true }
+minicode-config = { workspace = true }
+minicode-file-review = { workspace = true }
+minicode-mcp = { workspace = true }
+minicode-permissions = { workspace = true }
+minicode-skills = { workspace = true }
+minicode-tool = { workspace = true }
+minicode-workspace = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shell-words = "1"

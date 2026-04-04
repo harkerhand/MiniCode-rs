@@ -1,20 +1,10 @@
-pub use minicode_agent_core::*;
-pub use minicode_install::*;
-pub use minicode_manage::*;
-pub use minicode_mock_model::*;
-pub use minicode_permissions::*;
-pub use minicode_tools_runtime::*;
-pub use minicode_tui::*;
-
 use std::io::IsTerminal;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
-use minicode_core::config::load_runtime_config;
-use minicode_core::config::set_active_session_context;
-use minicode_core::prompt::{McpServerSummary, build_system_prompt};
-use minicode_core::types::{ChatMessage, ModelAdapter};
+
+use minicode_core::*;
 
 /// MiniCode 命令行工具
 #[derive(Debug, Parser)]
@@ -377,7 +367,7 @@ async fn handle_mcp_command(cwd: &std::path::Path, cmd: McpCommand) -> Result<bo
     match cmd {
         McpCommand::List { project } => {
             let scope = if project { "project" } else { "user" };
-            minicode_manage::list_mcp_servers(cwd, scope).await
+            list_mcp_servers(cwd, scope).await
         }
         McpCommand::Add {
             name,
@@ -387,12 +377,12 @@ async fn handle_mcp_command(cwd: &std::path::Path, cmd: McpCommand) -> Result<bo
             command,
         } => {
             let scope = if project { "project" } else { "user" };
-            let env = minicode_manage::parse_env_pairs(&env_vars)?;
-            minicode_manage::add_mcp_server(cwd, scope, name, protocol, env, command).await
+            let env = parse_env_pairs(&env_vars)?;
+            add_mcp_server(cwd, scope, name, protocol, env, command).await
         }
         McpCommand::Remove { name, project } => {
             let scope = if project { "project" } else { "user" };
-            minicode_manage::remove_mcp_server(cwd, scope, name).await
+            remove_mcp_server(cwd, scope, name).await
         }
     }
 }
@@ -400,18 +390,18 @@ async fn handle_mcp_command(cwd: &std::path::Path, cmd: McpCommand) -> Result<bo
 /// 处理技能相关命令
 async fn handle_skills_command(cwd: &std::path::Path, cmd: SkillsCommand) -> Result<bool> {
     match cmd {
-        SkillsCommand::List => minicode_manage::list_skills(cwd).await,
+        SkillsCommand::List => list_skills(cwd).await,
         SkillsCommand::Add {
             path,
             name,
             project,
         } => {
             let scope = if project { "project" } else { "user" };
-            minicode_manage::add_skill(cwd, scope, path, name).await
+            add_skill(cwd, scope, path, name).await
         }
         SkillsCommand::Remove { name, project } => {
             let scope = if project { "project" } else { "user" };
-            minicode_manage::remove_skill(cwd, scope, name).await
+            remove_skill(cwd, scope, name).await
         }
     }
 }
@@ -466,7 +456,7 @@ fn log_mcp_bootstrap(servers: &[McpServerSummary]) {
 
 /// 交互式会话选择
 async fn select_session(cwd: &std::path::Path) -> Result<Option<String>, anyhow::Error> {
-    let sessions = minicode_history::load_sessions(cwd)?;
+    let sessions = load_sessions(cwd)?;
 
     if sessions.sessions.is_empty() {
         eprintln!("没有找到之前的会话。");
@@ -574,7 +564,7 @@ async fn run() -> Result<()> {
         match select_session(&cwd).await? {
             Some(resume_id) => {
                 // 尝试加载会话数据
-                match minicode_history::load_session(&cwd, &resume_id) {
+                match load_session(&cwd, &resume_id) {
                     Ok(session) => {
                         eprintln!("✨ 正在加载会话数据...\n");
 
@@ -586,8 +576,7 @@ async fn run() -> Result<()> {
                             .collect();
 
                         // 将 ChatMessage 列表转换为可视化的成绩单条目
-                        let transcript_lines =
-                            minicode_history::render_recovered_messages(&recovered_messages);
+                        let transcript_lines = render_recovered_messages(&recovered_messages);
 
                         // 转换为 TranscriptEntry 格式
                         let transcript = transcript_lines
@@ -603,15 +592,15 @@ async fn run() -> Result<()> {
                     Err(e) => {
                         eprintln!("⚠️  无法加载会话: {}", e);
                         eprintln!("🆕 创建新会话...\n");
-                        (minicode_history::generate_session_id(), None, vec![])
+                        (generate_session_id(), None, vec![])
                     }
                 }
             }
-            None => (minicode_history::generate_session_id(), None, vec![]),
+            None => (generate_session_id(), None, vec![]),
         }
     } else {
         // 创建新会话
-        (minicode_history::generate_session_id(), None, vec![])
+        (generate_session_id(), None, vec![])
     };
     set_active_session_context(cwd.clone(), session_id.clone());
     let permissions = PermissionManager::new(cwd.clone())?;

@@ -10,14 +10,16 @@ authors.workspace = true
 anyhow = "1"
 chrono = "0.4"
 crossterm = "0.29"
-minicode-agent-core = { path = "../minicode-agent-core" }
-minicode-background-tasks = { path = "../minicode-background-tasks" }
-minicode-cli-commands = { path = "../minicode-cli-commands" }
-minicode-core = { path = "../minicode-core" }
-minicode-history = { path = "../minicode-history" }
-minicode-permissions = { path = "../minicode-permissions" }
-minicode-shortcuts = { path = "../minicode-shortcuts" }
-minicode-tool = { path = "../minicode-tool" }
+minicode-agent-core = { workspace = true }
+minicode-background-tasks = { workspace = true }
+minicode-cli-commands = { workspace = true }
+minicode-history = { workspace = true }
+minicode-permissions = { workspace = true }
+minicode-shortcuts = { workspace = true }
+minicode-tool = { workspace = true }
+minicode-config = { workspace = true }
+minicode-types = { workspace = true }
+minicode-prompt = { workspace = true }
 ratatui = "0.29"
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "time"] }
