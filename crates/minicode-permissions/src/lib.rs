@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
-use minicode_core::config::mini_code_permissions_path;
+use minicode_core::config::project_session_permissions_path;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -96,6 +96,7 @@ struct PermissionState {
 #[derive(Clone)]
 pub struct PermissionManager {
     workspace_root: PathBuf,
+    store_path: PathBuf,
     state: Arc<Mutex<PermissionState>>,
     prompt_handler: Arc<Mutex<Option<PermissionPromptHandler>>>,
 }
@@ -105,6 +106,7 @@ impl std::fmt::Debug for PermissionManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PermissionManager")
             .field("workspace_root", &self.workspace_root)
+            .field("store_path", &self.store_path)
             .field("state", &"<shared-state>")
             .field(
                 "prompt_handler",
@@ -120,8 +122,9 @@ impl std::fmt::Debug for PermissionManager {
 
 impl PermissionManager {
     /// 从持久化存储加载权限配置并初始化管理器。
-    pub fn new(workspace_root: PathBuf) -> Result<Self> {
-        let store = read_store()?;
+    pub fn new(workspace_root: PathBuf, session_id: &str) -> Result<Self> {
+        let store_path = project_session_permissions_path(&workspace_root, session_id);
+        let store = read_store(&store_path)?;
 
         let state = PermissionState {
             allowed_directory_prefixes: store.allowed_directory_prefixes.into_iter().collect(),
@@ -141,6 +144,7 @@ impl PermissionManager {
         };
         Ok(Self {
             workspace_root,
+            store_path,
             state: Arc::new(Mutex::new(state)),
             prompt_handler: Arc::new(Mutex::new(None)),
         })
@@ -610,7 +614,7 @@ impl PermissionManager {
 
     /// 将可持久化权限规则写回磁盘。
     pub fn persist(&self) -> Result<()> {
-        let path = mini_code_permissions_path();
+        let path = self.store_path.clone();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -663,8 +667,7 @@ fn is_within_directory(root: &Path, target: &Path) -> bool {
 }
 
 /// 从磁盘读取权限存储，不存在时返回默认值。
-fn read_store() -> Result<PermissionStore> {
-    let path = mini_code_permissions_path();
+fn read_store(path: &Path) -> Result<PermissionStore> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(serde_json::from_str(&content)?),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(PermissionStore::default()),

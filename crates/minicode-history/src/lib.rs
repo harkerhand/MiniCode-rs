@@ -4,14 +4,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use minicode_config::{
-    project_session_conversation_path, project_session_metadata_path, project_sessions_dir,
-    project_sessions_index,
+    project_session_conversation_path, project_session_dir, project_session_metadata_path,
+    project_sessions_dir, project_sessions_index,
 };
 use minicode_types::{ChatMessage, TranscriptLine};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
-// LEGACY: Command history functions (kept for compatibility)
+// SESSION INPUT HISTORY
 // ============================================================================
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -19,9 +19,13 @@ struct HistoryFile {
     entries: Vec<String>,
 }
 
-/// 加载历史输入并限制最多保留最近 200 条。
-pub fn load_history_entries() -> Vec<String> {
-    let path = minicode_config::mini_code_history_path();
+fn session_history_path(cwd: &Path, session_id: &str) -> std::path::PathBuf {
+    project_session_dir(cwd, session_id).join("input_history.json")
+}
+
+/// 加载某个会话的历史输入并限制最多保留最近 200 条。
+pub fn load_session_history_entries(cwd: &Path, session_id: &str) -> Vec<String> {
+    let path = session_history_path(cwd, session_id);
     let Ok(content) = fs::read_to_string(path) else {
         return vec![];
     };
@@ -35,9 +39,9 @@ pub fn load_history_entries() -> Vec<String> {
     parsed.entries[parsed.entries.len() - keep..].to_vec()
 }
 
-/// 保存历史输入并仅写入最近 200 条记录。
-pub fn save_history_entries(entries: &[String]) -> Result<()> {
-    let path = minicode_config::mini_code_history_path();
+/// 保存某个会话的历史输入并仅写入最近 200 条记录。
+pub fn save_session_history_entries(cwd: &Path, session_id: &str, entries: &[String]) -> Result<()> {
+    let path = session_history_path(cwd, session_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

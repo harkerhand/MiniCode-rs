@@ -6,7 +6,7 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use minicode_agent_core::run_agent_turn;
 use minicode_cli_commands::{find_matching_slash_commands, try_handle_local_command};
-use minicode_core::history::save_history_entries;
+use minicode_core::history::save_session_history_entries;
 use minicode_core::prompt::build_system_prompt;
 use minicode_core::types::ChatMessage;
 use minicode_permissions::{PermissionDecision, PermissionPromptHandler, PermissionPromptResult};
@@ -352,7 +352,7 @@ pub(crate) async fn handle_submit(
 
     if state.history.last().map(|x| x.as_str()) != Some(input.as_str()) {
         state.history.push(input.clone());
-        let _ = save_history_entries(&state.history);
+        let _ = save_session_history_entries(&args.cwd, &args.session_id, &state.history);
     }
     state.history_index = state.history.len();
     state.history_draft.clear();

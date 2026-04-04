@@ -552,7 +552,6 @@ async fn run() -> Result<()> {
     // 初始化运行时环境
     let runtime = load_runtime_config(&cwd).ok();
     let tools = Arc::new(create_default_tool_registry(&cwd, runtime.as_ref()).await?);
-    let permissions = PermissionManager::new(cwd.clone())?;
 
     // 选择模型适配器
     let model: Arc<dyn ModelAdapter> = if is_mock_mode() {
@@ -570,7 +569,7 @@ async fn run() -> Result<()> {
     set_mcp_startup_logging_enabled(false);
 
     // 处理会话选择或创建
-    let (session_id, initial_messages, initial_transcript) = if cli.resume {
+    let (session_id, recovered_messages, initial_transcript) = if cli.resume {
         match select_session(&cwd).await? {
             Some(resume_id) => {
                 // 尝试加载会话数据
@@ -598,52 +597,31 @@ async fn run() -> Result<()> {
                             })
                             .collect();
 
-                        (resume_id, recovered_messages, transcript)
+                        (resume_id, Some(recovered_messages), transcript)
                     }
                     Err(e) => {
                         eprintln!("⚠️  无法加载会话: {}", e);
                         eprintln!("🆕 创建新会话...\n");
-
-                        let new_id = minicode_history::generate_session_id();
-                        let system_msg = ChatMessage::System {
-                            content: {
-                                let skills = tools.get_skills();
-                                let mcp_servers = tools.get_mcp_servers();
-                                build_system_prompt(
-                                    &cwd,
-                                    &permissions.get_summary(),
-                                    &skills,
-                                    &mcp_servers,
-                                )
-                            },
-                        };
-                        (new_id, vec![system_msg], vec![])
+                        (minicode_history::generate_session_id(), None, vec![])
                     }
                 }
             }
-            None => {
-                let new_id = minicode_history::generate_session_id();
-                let system_msg = ChatMessage::System {
-                    content: {
-                        let skills = tools.get_skills();
-                        let mcp_servers = tools.get_mcp_servers();
-                        build_system_prompt(&cwd, &permissions.get_summary(), &skills, &mcp_servers)
-                    },
-                };
-                (new_id, vec![system_msg], vec![])
-            }
+            None => (minicode_history::generate_session_id(), None, vec![]),
         }
     } else {
         // 创建新会话
-        let new_id = minicode_history::generate_session_id();
-        let system_msg = ChatMessage::System {
-            content: {
-                let skills = tools.get_skills();
-                let mcp_servers = tools.get_mcp_servers();
-                build_system_prompt(&cwd, &permissions.get_summary(), &skills, &mcp_servers)
-            },
-        };
-        (new_id, vec![system_msg], vec![])
+        (minicode_history::generate_session_id(), None, vec![])
+    };
+    let permissions = PermissionManager::new(cwd.clone(), &session_id)?;
+    let initial_history = minicode_history::load_session_history_entries(&cwd, &session_id);
+    let initial_messages = if let Some(messages) = recovered_messages {
+        messages
+    } else {
+        let skills = tools.get_skills();
+        let mcp_servers = tools.get_mcp_servers();
+        vec![ChatMessage::System {
+            content: build_system_prompt(&cwd, &permissions.get_summary(), &skills, &mcp_servers),
+        }]
     };
 
     let session_start_time = std::time::SystemTime::now();
@@ -659,11 +637,13 @@ async fn run() -> Result<()> {
         session_start_time,
         initial_messages,
         initial_transcript,
+        initial_history,
     })
     .await?;
 
     // 清理资源
     tools.dispose().await;
+    println!("👋 再见！");
     Ok(())
 }
 

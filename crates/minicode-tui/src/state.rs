@@ -106,6 +106,7 @@ pub struct TuiAppArgs {
     pub session_start_time: SystemTime,
     pub initial_messages: Vec<ChatMessage>,
     pub initial_transcript: Vec<TranscriptEntry>,
+    pub initial_history: Vec<String>,
 }
 
 pub(crate) struct ChannelCallbacks {
