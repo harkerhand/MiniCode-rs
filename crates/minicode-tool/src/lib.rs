@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use jsonschema::{Draft, JSONSchema};
+use jsonschema::Draft;
+use jsonschema::Validator;
 use minicode_permissions::PermissionManager;
 use minicode_prompt::{McpServerSummary, SkillSummary};
 use serde_json::Value;
@@ -67,16 +68,13 @@ pub trait Tool: Send + Sync {
 }
 
 enum InputValidator {
-    Compiled(JSONSchema),
+    Compiled(Validator),
     CompileError(String),
 }
 
 /// 编译工具输入校验器。
 fn compile_validator(schema: &Value) -> InputValidator {
-    match JSONSchema::options()
-        .with_draft(Draft::Draft7)
-        .compile(schema)
-    {
+    match Validator::options().with_draft(Draft::Draft7).build(schema) {
         Ok(validator) => InputValidator::Compiled(validator),
         Err(err) => InputValidator::CompileError(format!("Invalid tool schema: {err}")),
     }
@@ -86,8 +84,12 @@ fn compile_validator(schema: &Value) -> InputValidator {
 fn validate_tool_input(validator: &InputValidator, input: &Value) -> Result<(), String> {
     match validator {
         InputValidator::Compiled(validator) => {
-            if let Err(errors) = validator.validate(input) {
-                let details = errors.take(3).map(|e| e.to_string()).collect::<Vec<_>>();
+            if !validator.is_valid(input) {
+                let details = validator
+                    .iter_errors(input)
+                    .take(3)
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>();
                 if details.is_empty() {
                     return Err("Invalid input".to_string());
                 }

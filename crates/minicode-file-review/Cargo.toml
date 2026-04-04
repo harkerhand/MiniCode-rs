@@ -9,7 +9,7 @@ authors.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 minicode-tool = { workspace = true }
-similar = "2"
+similar = "3.0.0"
 
 [lints]
 workspace = true

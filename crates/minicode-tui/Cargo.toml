@@ -20,10 +20,10 @@ minicode-tool = { workspace = true }
 minicode-config = { workspace = true }
 minicode-types = { workspace = true }
 minicode-prompt = { workspace = true }
-ratatui = "0.29"
+ratatui = "0.30.0"
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
-unicode-width = "0.1"
+unicode-width = "0.2.2"
 
 [lints]
 workspace = true

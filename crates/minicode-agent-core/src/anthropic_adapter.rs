@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use minicode_config::{RuntimeConfig, load_runtime_config};
 use minicode_tool::ToolRegistry;
 use minicode_types::{AgentStep, ChatMessage, ModelAdapter, StepDiagnostics, ToolCall};
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
