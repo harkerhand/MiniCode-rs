@@ -26,8 +26,8 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/LiuMengxuan04/MiniCode"
-authors = ["Liu Mengxuan"]
+repository = "https://github.com/harkerhand/Minicode-rs"
+authors = ["harkerhand <harkerhand@outlook.com>"]
 
 [workspace.dependencies]
 
