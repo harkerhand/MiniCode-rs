@@ -44,11 +44,7 @@ async fn run() -> Result<()> {
                 eprintln!("✨ 正在加载会话数据...\n");
 
                 // 从会话中提取消息（直接使用 serde_json::Value）
-                let recovered_messages: Vec<ChatMessage> = session
-                    .messages
-                    .iter()
-                    .filter_map(|v| serde_json::from_value::<ChatMessage>(v.clone()).ok())
-                    .collect();
+                let recovered_messages: Vec<ChatMessage> = session.messages;
 
                 // 将 ChatMessage 列表转换为可视化的成绩单条目
                 let transcript_lines = render_recovered_messages(&recovered_messages);

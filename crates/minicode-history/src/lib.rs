@@ -184,7 +184,7 @@ pub struct TurnRecord {
 pub struct SessionRecord {
     pub session_id: String,
     pub metadata: SessionMetadata,
-    pub messages: Vec<serde_json::Value>,
+    pub messages: Vec<ChatMessage>,
     pub turns: Vec<TurnRecord>,
 }
 
@@ -306,7 +306,7 @@ pub fn load_session(cwd: impl AsRef<Path>, session_id: &str) -> Result<SessionRe
     };
 
     let conv_path = project_session_conversation_path(cwd.as_ref(), session_id);
-    let (messages, turns): (Vec<serde_json::Value>, Vec<TurnRecord>) = if conv_path.exists() {
+    let (messages, turns): (Vec<ChatMessage>, Vec<TurnRecord>) = if conv_path.exists() {
         let content = fs::read_to_string(conv_path)?;
         let data: serde_json::Value = serde_json::from_str(&content)?;
         (
@@ -564,11 +564,7 @@ pub async fn resolve_and_load_session(
         Ok(session) => {
             eprintln!("✨ 正在加载会话数据...\n");
 
-            let recovered_messages: Vec<ChatMessage> = session
-                .messages
-                .iter()
-                .filter_map(|v| serde_json::from_value::<ChatMessage>(v.clone()).ok())
-                .collect();
+            let recovered_messages: Vec<ChatMessage> = session.messages;
 
             let transcript_lines = render_recovered_messages(&recovered_messages);
             let transcript = transcript_lines

@@ -50,7 +50,7 @@ pub(crate) fn render_screen(
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(6),
+                Constraint::Length(5),
                 Constraint::Min(10),
                 Constraint::Length(input_height),
             ])

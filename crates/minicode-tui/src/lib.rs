@@ -356,10 +356,7 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     let session = minicode_history::SessionRecord {
         session_id: session_id().clone(),
         metadata,
-        messages: messages
-            .iter()
-            .map(|m| serde_json::to_value(m).unwrap_or_default())
-            .collect(),
+        messages,
         turns: vec![],
     };
 
