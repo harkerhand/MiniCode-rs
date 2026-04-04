@@ -9,7 +9,9 @@ use minicode_cli_commands::{find_matching_slash_commands, try_handle_local_comma
 use minicode_core::history::save_history_entries;
 use minicode_core::prompt::build_system_prompt;
 use minicode_core::types::ChatMessage;
-use minicode_permissions::{PermissionDecision, PermissionPromptHandler, PermissionPromptResult};
+use minicode_permissions::{
+    PermissionDecision, PermissionPromptHandler, PermissionPromptResult, session_permissions,
+};
 use minicode_shortcuts::parse_local_tool_shortcut;
 use minicode_tool::ToolContext;
 use ratatui::Terminal;
@@ -20,7 +22,6 @@ use crate::input::{scroll_transcript_by, toggle_tool_details};
 use crate::render::render_screen;
 use crate::state::{
     ChannelCallbacks, PendingApproval, ScreenState, TranscriptEntry, TuiAppArgs, TurnEvent,
-    session_permissions,
 };
 
 /// 向会话转录中写入一条错误消息并更新状态。

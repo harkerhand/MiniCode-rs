@@ -1,6 +1,7 @@
+use minicode_permissions::session_permissions;
 use ratatui::text::{Line, Span};
 
-use crate::state::{ScreenState, TuiAppArgs, session_permissions};
+use crate::state::{ScreenState, TuiAppArgs};
 use crate::theme::theme;
 
 pub(super) fn build_header_lines(args: &TuiAppArgs, state: &ScreenState) -> Vec<Line<'static>> {

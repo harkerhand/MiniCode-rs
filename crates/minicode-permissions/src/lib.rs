@@ -4,7 +4,7 @@ use std::future::Future;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Result, anyhow};
 use minicode_core::config::{get_active_session_context, project_session_permissions_path};
@@ -100,6 +100,20 @@ pub struct PermissionManager {
     store_path: PathBuf,
     state: Arc<Mutex<PermissionState>>,
     prompt_handler: Arc<Mutex<Option<PermissionPromptHandler>>>,
+}
+
+static SESSION_PERMISSIONS: OnceLock<PermissionManager> = OnceLock::new();
+
+pub fn init_session_permissions(permissions: PermissionManager) -> Result<()> {
+    SESSION_PERMISSIONS
+        .set(permissions)
+        .map_err(|_| anyhow!("Session permissions already initialized"))
+}
+
+pub fn session_permissions() -> &'static PermissionManager {
+    SESSION_PERMISSIONS
+        .get()
+        .expect("Session permissions not initialized")
 }
 
 impl std::fmt::Debug for PermissionManager {

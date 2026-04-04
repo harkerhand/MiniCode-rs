@@ -1,22 +1,16 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::SystemTime;
 
-use anyhow::{Result, anyhow};
 use minicode_agent_core::AgentTurnCallbacks;
 use minicode_core::config::RuntimeConfig;
-use minicode_core::types::{ChatMessage, ModelAdapter};
-use minicode_permissions::{PermissionManager, PermissionPromptRequest, PermissionPromptResult};
+use minicode_core::types::{ChatMessage, ModelAdapter, TranscriptLine};
+use minicode_permissions::{PermissionPromptRequest, PermissionPromptResult};
 use minicode_tool::{ToolRegistry, ToolResult};
 use tokio::sync::{mpsc, oneshot};
 
-#[derive(Clone)]
-pub struct TranscriptEntry {
-    pub kind: String,
-    pub body: String,
-}
+pub type TranscriptEntry = TranscriptLine;
 
 pub(crate) struct PendingApproval {
     pub(crate) request: PermissionPromptRequest,
@@ -103,70 +97,6 @@ pub struct TuiAppArgs {
     pub tools: Arc<ToolRegistry>,
     pub model: Arc<dyn ModelAdapter>,
     pub cwd: PathBuf,
-}
-
-static INITIAL_MESSAGES: OnceLock<Vec<ChatMessage>> = OnceLock::new();
-static INITIAL_TRANSCRIPT: OnceLock<Vec<TranscriptEntry>> = OnceLock::new();
-static SESSION_PERMISSIONS: OnceLock<PermissionManager> = OnceLock::new();
-static SESSION_ID: OnceLock<String> = OnceLock::new();
-static SESSION_START_TIME: OnceLock<SystemTime> = OnceLock::new();
-
-pub fn init_initial_messages(messages: Vec<ChatMessage>) -> Result<()> {
-    INITIAL_MESSAGES
-        .set(messages)
-        .map_err(|_| anyhow!("TUI initial messages already initialized"))
-}
-
-pub fn initial_messages() -> &'static Vec<ChatMessage> {
-    INITIAL_MESSAGES
-        .get()
-        .expect("TUI initial messages not initialized")
-}
-
-pub fn init_initial_transcript(transcript: Vec<TranscriptEntry>) -> Result<()> {
-    INITIAL_TRANSCRIPT
-        .set(transcript)
-        .map_err(|_| anyhow!("TUI initial transcript already initialized"))
-}
-
-pub fn initial_transcript() -> &'static Vec<TranscriptEntry> {
-    INITIAL_TRANSCRIPT
-        .get()
-        .expect("TUI initial transcript not initialized")
-}
-
-pub fn init_session_permissions(permissions: PermissionManager) -> Result<()> {
-    SESSION_PERMISSIONS
-        .set(permissions)
-        .map_err(|_| anyhow!("TUI session permissions already initialized"))
-}
-
-pub fn session_permissions() -> &'static PermissionManager {
-    SESSION_PERMISSIONS
-        .get()
-        .expect("TUI session permissions not initialized")
-}
-
-pub fn init_session_id(session_id: String) -> Result<()> {
-    SESSION_ID
-        .set(session_id)
-        .map_err(|_| anyhow!("TUI session id already initialized"))
-}
-
-pub fn session_id() -> &'static String {
-    SESSION_ID.get().expect("TUI session id not initialized")
-}
-
-pub fn init_session_start_time(start_time: SystemTime) -> Result<()> {
-    SESSION_START_TIME
-        .set(start_time)
-        .map_err(|_| anyhow!("TUI session start time already initialized"))
-}
-
-pub fn session_start_time() -> SystemTime {
-    *SESSION_START_TIME
-        .get()
-        .expect("TUI session start time not initialized")
 }
 
 pub(crate) struct ChannelCallbacks {
