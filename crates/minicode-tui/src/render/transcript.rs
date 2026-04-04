@@ -1,7 +1,6 @@
 use minicode_background_tasks::list_background_tasks;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::ListItem;
 
 use crate::state::{ScreenState, TranscriptEntry};
 
@@ -40,10 +39,33 @@ pub(super) fn transcript_lines(entries: &[TranscriptEntry]) -> Vec<Line<'static>
     lines
 }
 
-pub(super) fn build_activity_items(state: &ScreenState) -> Vec<ListItem<'static>> {
-    let mut items = Vec::new();
+pub(super) fn session_lines(state: &ScreenState) -> Vec<Line<'static>> {
+    let mut lines = transcript_lines(&state.transcript);
+    let has_transcript = !lines.is_empty();
+
+    if has_transcript {
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "▌",
+            Style::default()
+                .fg(Color::LightMagenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            "activity",
+            Style::default()
+                .fg(Color::LightMagenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
     if let Some(tool) = &state.active_tool {
-        items.push(ListItem::new(Line::from(vec![
+        lines.push(Line::from(vec![
+            Span::raw("  "),
             Span::styled(
                 "running",
                 Style::default()
@@ -52,50 +74,56 @@ pub(super) fn build_activity_items(state: &ScreenState) -> Vec<ListItem<'static>
             ),
             Span::raw(" "),
             Span::raw(tool.clone()),
-        ])));
+        ]));
     }
 
-    for (name, ok) in state.recent_tools.iter().rev().take(6) {
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(
-                if *ok { "ok" } else { "err" },
-                Style::default()
-                    .fg(if *ok { Color::Green } else { Color::Red })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::raw(name.clone()),
-        ])));
-    }
-
-    if items.is_empty() {
-        items.push(ListItem::new("recent: none"));
+    if state.recent_tools.is_empty() {
+        lines.push(Line::from("  recent none"));
+    } else {
+        for (name, ok) in state.recent_tools.iter().rev().take(6) {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    if *ok { "ok" } else { "err" },
+                    Style::default()
+                        .fg(if *ok { Color::Green } else { Color::Red })
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::raw(name.clone()),
+            ]));
+        }
     }
 
     let tasks = list_background_tasks();
     if !tasks.is_empty() {
-        items.push(ListItem::new(Line::from("")));
-        items.push(ListItem::new(Line::from(vec![Span::styled(
-            "background",
-            Style::default()
-                .fg(Color::LightCyan)
-                .add_modifier(Modifier::BOLD),
-        )])));
+        lines.push(Line::from("  "));
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                "background",
+                Style::default()
+                    .fg(Color::LightCyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
         for task in tasks.iter().rev().take(4) {
             let color = match task.status.as_str() {
                 "running" => Color::Yellow,
                 "completed" => Color::Green,
                 _ => Color::Red,
             };
-            items.push(ListItem::new(Line::from(vec![
+            lines.push(Line::from(vec![
+                Span::raw("  "),
                 Span::styled(
                     task.status.clone(),
                     Style::default().fg(color).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
                 Span::raw(format!("pid={} {}", task.pid, task.command)),
-            ])));
+            ]));
         }
     }
-    items
+
+    lines
 }

@@ -67,7 +67,7 @@ fn command_to_management_argv(command: &Commands) -> Option<Vec<String>> {
 #[tokio::main]
 async fn main() {
     if let Err(err) = real_main().await {
-        eprintln!("{}", err);
+        let _ = err;
         std::process::exit(1);
     }
 }

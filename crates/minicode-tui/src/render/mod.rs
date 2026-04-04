@@ -18,7 +18,7 @@ mod ui_utils;
 
 use approval::build_approval_lines;
 use header::build_header_lines;
-use transcript::{build_activity_items, transcript_lines};
+use transcript::session_lines;
 use ui_utils::{centered_rect, input_viewport, sanitize_line};
 
 pub(crate) fn render_screen(
@@ -35,25 +35,20 @@ pub(crate) fn render_screen(
 
     terminal.draw(|frame| {
         let area = frame.area();
+        let input_height = if command_rows > 0 { 11 } else { 5 };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),
+                Constraint::Length(6),
                 Constraint::Min(10),
-                Constraint::Length(command_rows),
-                Constraint::Length(4),
+                Constraint::Length(input_height),
             ])
             .split(area);
-
-        let mid = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
-            .split(chunks[1]);
 
         let header = Paragraph::new(build_header_lines(args, state))
             .block(
                 Block::default()
-                    .title(" MiniCode ")
+                    .title(" Workspace ")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .style(Style::default().fg(Color::LightCyan)),
@@ -61,7 +56,12 @@ pub(crate) fn render_screen(
             .wrap(Wrap { trim: true });
         frame.render_widget(header, chunks[0]);
 
-        let feed_lines = transcript_lines(&state.transcript);
+        let feed_lines = session_lines(state);
+        let feed_line_count = feed_lines.len();
+        let feed_viewport_height = chunks[1].height.saturating_sub(2) as usize;
+        let max_scroll = feed_line_count.saturating_sub(feed_viewport_height);
+        let scroll_from_bottom = state.transcript_scroll_offset.min(max_scroll);
+        let scroll_from_top = max_scroll.saturating_sub(scroll_from_bottom);
         let fallback = vec![Line::from(
             "(no messages yet, enter /help to list commands)",
         )];
@@ -72,71 +72,17 @@ pub(crate) fn render_screen(
         })
         .block(
             Block::default()
-                .title(" Session Feed ")
+                .title(" Session ")
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .style(Style::default().fg(Color::Blue)),
         )
         .wrap(Wrap { trim: false })
-        .scroll((state.transcript_scroll_offset as u16, 0));
-        frame.render_widget(feed, mid[0]);
-
-        let activity = List::new(build_activity_items(state)).block(
-            Block::default()
-                .title(" Activity ")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .style(Style::default().fg(Color::Magenta)),
-        );
-        frame.render_widget(activity, mid[1]);
-
-        if command_rows > 0 {
-            let items = visible_commands
-                .iter()
-                .take(6)
-                .map(|cmd| {
-                    ratatui::widgets::ListItem::new(Line::from(vec![
-                        Span::styled(
-                            cmd.usage.to_string(),
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("  "),
-                        Span::raw(cmd.description.to_string()),
-                    ]))
-                })
-                .collect::<Vec<_>>();
-
-            let mut list_state = ListState::default();
-            if !visible_commands.is_empty() {
-                list_state.select(Some(
-                    state
-                        .selected_slash_index
-                        .min(visible_commands.len().min(6) - 1),
-                ));
-            }
-
-            let commands = List::new(items)
-                .block(
-                    Block::default()
-                        .title(" Slash Commands ")
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .style(Style::default().fg(Color::LightBlue)),
-                )
-                .highlight_style(
-                    Style::default()
-                        .bg(Color::Rgb(30, 50, 80))
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .highlight_symbol("▶ ");
-            frame.render_stateful_widget(commands, chunks[2], &mut list_state);
-        }
+        .scroll((scroll_from_top as u16, 0));
+        frame.render_widget(feed, chunks[1]);
 
         let prompt_input = sanitize_line(&state.input);
-        let input_box = chunks[3];
+        let input_box = chunks[2];
         let available_input_width = input_box.width.saturating_sub(14) as usize;
         let (display_input, cursor_dx) = input_viewport(
             &prompt_input,
@@ -200,6 +146,47 @@ pub(crate) fn render_screen(
             )
             .wrap(Wrap { trim: false });
         frame.render_widget(prompt, input_box);
+
+        if command_rows > 0 {
+            let command_area = Rect {
+                x: input_box.x + 1,
+                y: input_box.y + 3,
+                width: input_box.width.saturating_sub(2),
+                height: input_box.height.saturating_sub(4),
+            };
+            let items = visible_commands
+                .iter()
+                .take(6)
+                .map(|cmd| {
+                    ratatui::widgets::ListItem::new(Line::from(vec![
+                        Span::styled(
+                            cmd.usage.to_string(),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("  "),
+                        Span::raw(cmd.description.to_string()),
+                    ]))
+                })
+                .collect::<Vec<_>>();
+
+            let mut list_state = ListState::default();
+            list_state.select(Some(
+                state
+                    .selected_slash_index
+                    .min(visible_commands.len().min(6) - 1),
+            ));
+            let commands = List::new(items)
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::Rgb(30, 50, 80))
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol("▶ ");
+            frame.render_stateful_widget(commands, command_area, &mut list_state);
+        }
 
         let prompt_area: Rect = input_box;
         let prefix_width = display_width("mini-code> ") as u16;

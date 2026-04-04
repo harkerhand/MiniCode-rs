@@ -243,18 +243,12 @@ impl ModelAdapter for AnthropicModelAdapter {
             last_status = resp.status().as_u16();
             let retry_after = Self::parse_retry_after(resp.headers());
             if !resp.status().is_success() {
-                let text = resp.text().await.unwrap_or_else(|e| {
-                    eprintln!("Warning: Failed to read response body: {}", e);
-                    format!("(unable to read body: {})", e)
-                });
+                let text = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|e| format!("(unable to read body: {})", e));
                 last_err = text.clone();
                 if Self::should_retry(last_status) && attempt < retry_limit {
-                    eprintln!(
-                        "Request failed with status {}, retrying (attempt {}/{})",
-                        last_status,
-                        attempt + 1,
-                        retry_limit
-                    );
                     tokio::time::sleep(Duration::from_millis(Self::retry_delay_ms(
                         attempt + 1,
                         retry_after,

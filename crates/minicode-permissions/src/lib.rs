@@ -120,12 +120,6 @@ impl std::fmt::Debug for PermissionManager {
 impl PermissionManager {
     pub fn new(workspace_root: PathBuf) -> Result<Self> {
         let store = read_store()?;
-        eprintln!(
-            "📋 Permission store loaded: dirs={}, cmds={}, edits={}",
-            store.allowed_directory_prefixes.len(),
-            store.allowed_command_patterns.len(),
-            store.allowed_edit_patterns.len()
-        );
 
         let state = PermissionState {
             allowed_directory_prefixes: store.allowed_directory_prefixes.into_iter().collect(),
@@ -632,10 +626,6 @@ impl PermissionManager {
         let is_tty_out = io::stdout().is_terminal();
 
         if !is_tty_in || !is_tty_out {
-            eprintln!(
-                "⚠️  Warning: TTY not available (stdin: {}, stdout: {}). Permission denied by default.",
-                is_tty_in, is_tty_out
-            );
             return Ok(false);
         }
 
@@ -643,10 +633,9 @@ impl PermissionManager {
         write!(stdout, "{}", prompt)?;
         stdout.flush()?;
         let mut input = String::new();
-        io::stdin().read_line(&mut input).map_err(|e| {
-            eprintln!("Error reading user input: {}", e);
-            anyhow!("Failed to read permission response: {}", e)
-        })?;
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| anyhow!("Failed to read permission response: {}", e))?;
         Ok(matches!(input.trim(), "y" | "Y" | "yes" | "YES"))
     }
 }

@@ -9,9 +9,7 @@ use minicode_cli_commands::{find_matching_slash_commands, try_handle_local_comma
 use minicode_core::history::save_history_entries;
 use minicode_core::prompt::build_system_prompt;
 use minicode_core::types::ChatMessage;
-use minicode_permissions::{
-    PermissionDecision, PermissionPromptHandler, PermissionPromptResult,
-};
+use minicode_permissions::{PermissionDecision, PermissionPromptHandler, PermissionPromptResult};
 use minicode_shortcuts::parse_local_tool_shortcut;
 use minicode_tool::ToolContext;
 use ratatui::Terminal;
@@ -22,6 +20,15 @@ use crate::render::render_screen;
 use crate::state::{
     ChannelCallbacks, PendingApproval, ScreenState, TranscriptEntry, TuiAppArgs, TurnEvent,
 };
+
+fn push_error_to_session(state: &mut ScreenState, message: impl Into<String>) {
+    state.transcript.push(TranscriptEntry {
+        kind: "tool:error".to_string(),
+        body: message.into(),
+    });
+    state.transcript_scroll_offset = 0;
+    state.status = Some("Error".to_string());
+}
 
 fn summarize_tool_input(tool_name: &str, input: &serde_json::Value) -> String {
     if let Some(path) = input.get("path").and_then(|v| v.as_str()) {
@@ -282,12 +289,19 @@ pub(crate) async fn handle_submit(
         return Ok(false);
     }
 
-    if let Some(local) = try_handle_local_command(&input, &args.cwd, Some(&args.tools)).await? {
-        state.transcript.push(TranscriptEntry {
-            kind: "assistant".to_string(),
-            body: local,
-        });
-        return Ok(false);
+    match try_handle_local_command(&input, &args.cwd, Some(&args.tools)).await {
+        Ok(Some(local)) => {
+            state.transcript.push(TranscriptEntry {
+                kind: "assistant".to_string(),
+                body: local,
+            });
+            return Ok(false);
+        }
+        Ok(None) => {}
+        Err(err) => {
+            push_error_to_session(state, format!("local command failed: {err:#}"));
+            return Ok(false);
+        }
     }
 
     if let Some(shortcut) = parse_local_tool_shortcut(&input) {

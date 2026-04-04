@@ -24,8 +24,8 @@ use input::{
     insert_char_at, remove_char_at, remove_char_before, scroll_transcript_by,
 };
 use render::render_screen;
-use state::ScreenState;
 pub use state::TuiAppArgs;
+use state::{ScreenState, TranscriptEntry};
 use turn::{handle_approval_key, handle_submit};
 
 struct TerminalGuard;
@@ -128,14 +128,28 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
                             state.input.clear();
                             state.cursor_offset = 0;
                             state.selected_slash_index = 0;
-                            should_exit = handle_submit(
+                            match handle_submit(
                                 &mut terminal,
                                 &mut args,
                                 &mut state,
                                 &mut messages,
                                 submitted,
                             )
-                            .await?;
+                            .await
+                            {
+                                Ok(exit) => should_exit = exit,
+                                Err(err) => {
+                                    state.transcript.push(TranscriptEntry {
+                                        kind: "tool:error".to_string(),
+                                        body: format!("submit failed: {err:#}"),
+                                    });
+                                    state.status = Some("Error".to_string());
+                                    state.is_busy = false;
+                                    state.active_tool = None;
+                                    state.pending_approval = None;
+                                    state.transcript_scroll_offset = 0;
+                                }
+                            }
                             state.message_count = messages.len();
                         }
                         KeyEvent {
