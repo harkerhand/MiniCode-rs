@@ -55,7 +55,7 @@ async fn real_main() -> Result<()> {
     let argv = std::env::args().skip(1).collect::<Vec<_>>();
 
     if argv.first().map(|x| x.as_str()) == Some("install") {
-        install::run_install_wizard()?;
+        install::run_install_wizard(&cwd)?;
         return Ok(());
     }
 

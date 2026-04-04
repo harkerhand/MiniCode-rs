@@ -52,6 +52,38 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         usage: "/exit",
         description: "退出。",
     },
+    SlashCommand {
+        usage: "/ls [path]",
+        description: "列出目录文件。",
+    },
+    SlashCommand {
+        usage: "/grep <pattern>::[path]",
+        description: "在文件中搜索文本。",
+    },
+    SlashCommand {
+        usage: "/read <path>",
+        description: "直接读取文件内容。",
+    },
+    SlashCommand {
+        usage: "/write <path>::<content>",
+        description: "直接写入文件。",
+    },
+    SlashCommand {
+        usage: "/modify <path>::<content>",
+        description: "替换文件内容（可审阅 diff）。",
+    },
+    SlashCommand {
+        usage: "/edit <path>::<search>::<replace>",
+        description: "按精确文本替换编辑文件。",
+    },
+    SlashCommand {
+        usage: "/patch <path>::<search1>::<replace1>::...",
+        description: "对单文件执行多组替换。",
+    },
+    SlashCommand {
+        usage: "/cmd [cwd::]<command> [args...]",
+        description: "直接执行允许列表内命令。",
+    },
 ];
 
 pub fn format_slash_commands() -> String {
@@ -127,11 +159,27 @@ pub async fn try_handle_local_command(
             servers
                 .iter()
                 .map(|s| {
+                    let protocol = s
+                        .protocol
+                        .as_ref()
+                        .map(|x| format!("  protocol={x}"))
+                        .unwrap_or_default();
+                    let resources = s
+                        .resource_count
+                        .map(|x| format!("  resources={x}"))
+                        .unwrap_or_default();
+                    let prompts = s
+                        .prompt_count
+                        .map(|x| format!("  prompts={x}"))
+                        .unwrap_or_default();
                     format!(
-                        "{}  status={}  tools={}{}",
+                        "{}  status={}  tools={}{}{}{}{}",
                         s.name,
                         s.status,
                         s.tool_count,
+                        resources,
+                        prompts,
+                        protocol,
                         s.error
                             .as_ref()
                             .map(|x| format!("  error={x}"))

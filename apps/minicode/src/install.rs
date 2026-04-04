@@ -1,9 +1,11 @@
 use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::config::{MiniCodeSettings, save_minicode_settings};
+use crate::config::{MiniCodeSettings, load_effective_settings, save_minicode_settings};
 
 fn prompt_line(prompt: &str, default: Option<&str>) -> Result<String> {
     let mut stdout = io::stdout();
@@ -33,25 +35,54 @@ fn has_path_entry(target: &str) -> bool {
         .any(|p| p == target)
 }
 
-pub fn run_install_wizard() -> Result<()> {
+fn get_env_string(
+    env: &std::collections::HashMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<String> {
+    env.get(key)
+        .map(|x| x.to_string().trim_matches('"').to_string())
+        .filter(|x| !x.trim().is_empty())
+}
+
+fn create_launcher_script(launcher_path: &Path, binary_path: &Path) -> Result<()> {
+    let script = format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\n\nexec \"{}\" \"$@\"\n",
+        binary_path.display()
+    );
+
+    std::fs::write(launcher_path, script)?;
+    let mut perms = std::fs::metadata(launcher_path)?.permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(launcher_path, perms)?;
+    Ok(())
+}
+
+pub fn run_install_wizard(cwd: &Path) -> Result<()> {
     println!("mini-code installer");
 
     let settings_path = crate::config::mini_code_settings_path();
-    println!("Configuration will be written to: {}", settings_path.display());
+    println!(
+        "Configuration will be written to: {}",
+        settings_path.display()
+    );
     println!("Settings are stored separately and won't affect other local tool configurations.");
     println!();
 
-    let model_default = std::env::var("ANTHROPIC_MODEL").ok();
-    let base_url_default = std::env::var("ANTHROPIC_BASE_URL")
-        .ok()
+    let effective = load_effective_settings(cwd)?;
+    let effective_env = effective.env.unwrap_or_default();
+
+    let model_default = effective
+        .model
+        .or_else(|| get_env_string(&effective_env, "ANTHROPIC_MODEL"))
+        .or_else(|| std::env::var("ANTHROPIC_MODEL").ok());
+    let base_url_default = get_env_string(&effective_env, "ANTHROPIC_BASE_URL")
+        .or_else(|| std::env::var("ANTHROPIC_BASE_URL").ok())
         .or_else(|| Some("https://api.anthropic.com".to_string()));
-    let auth_token_default = std::env::var("ANTHROPIC_AUTH_TOKEN").ok();
+    let auth_token_default = get_env_string(&effective_env, "ANTHROPIC_AUTH_TOKEN")
+        .or_else(|| std::env::var("ANTHROPIC_AUTH_TOKEN").ok());
 
     let model = prompt_line("Model name", model_default.as_deref())?;
-    let base_url = prompt_line(
-        "ANTHROPIC_BASE_URL",
-        base_url_default.as_deref(),
-    )?;
+    let base_url = prompt_line("ANTHROPIC_BASE_URL", base_url_default.as_deref())?;
 
     // Prompt for auth token with secret handling
     let saved_token_suffix = if auth_token_default.is_some() {
@@ -93,24 +124,28 @@ pub fn run_install_wizard() -> Result<()> {
         ..MiniCodeSettings::default()
     })?;
 
-    println!();
-    println!("Installation complete.");
-    println!("Configuration file: {}", settings_path.display());
-    println!("You can now start MiniCode from the TUI.");
-
-    // For Rust build, suggest adding to PATH if needed
     let target_bin = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
         .join(".local")
         .join("bin");
+    std::fs::create_dir_all(&target_bin)?;
+
+    let launcher_path = target_bin.join("minicode");
+    let binary_path = std::env::current_exe()?;
+    create_launcher_script(&launcher_path, &binary_path)?;
+
+    println!();
+    println!("Installation complete.");
+    println!("Configuration file: {}", settings_path.display());
+    println!("Launcher command: {}", launcher_path.display());
 
     if !has_path_entry(target_bin.to_string_lossy().as_ref()) {
         println!();
-        println!(
-            "Note: {} is not in your PATH.",
-            target_bin.display()
-        );
+        println!("Note: {} is not in your PATH.", target_bin.display());
         println!("You can add it to ~/.bashrc or ~/.zshrc:");
         println!("export PATH=\"{}:$PATH\"", target_bin.display());
+    } else {
+        println!();
+        println!("You can now run `minicode` from any terminal.");
     }
 
     Ok(())
