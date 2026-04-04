@@ -3,7 +3,7 @@ use serde_json::Value;
 use crate::tool::{ToolContext, ToolRegistry};
 use crate::types::{AgentStep, ChatMessage, ModelAdapter};
 
-pub trait AgentTurnCallbacks {
+pub trait AgentTurnCallbacks: Send {
     fn on_tool_start(&mut self, _tool_name: &str, _input: &Value) {}
     fn on_tool_result(&mut self, _tool_name: &str, _output: &str, _is_error: bool) {}
     fn on_assistant_message(&mut self, _content: &str) {}
@@ -49,7 +49,7 @@ pub async fn run_agent_turn(
     mut messages: Vec<ChatMessage>,
     context: ToolContext,
     max_steps: Option<usize>,
-    mut callbacks: Option<&mut dyn AgentTurnCallbacks>,
+    mut callbacks: Option<&mut (dyn AgentTurnCallbacks + Send)>,
 ) -> Vec<ChatMessage> {
     let mut empty_retry = 0usize;
     let mut recover_retry = 0usize;

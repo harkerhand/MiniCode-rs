@@ -16,16 +16,22 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+};
+use tokio::sync::{mpsc, oneshot};
 use unicode_width::UnicodeWidthStr;
 
 use crate::agent_loop::{AgentTurnCallbacks, run_agent_turn};
 use crate::cli_commands::{SLASH_COMMANDS, find_matching_slash_commands, try_handle_local_command};
 use crate::config::RuntimeConfig;
 use crate::history::{load_history_entries, save_history_entries};
-use crate::permissions::PermissionManager;
+use crate::permissions::{
+    PermissionManager, PermissionPromptDecision, PermissionPromptHandler, PermissionPromptKind,
+    PermissionPromptRequest,
+};
 use crate::prompt::build_system_prompt;
 use crate::tool::{ToolContext, ToolRegistry};
 use crate::types::{ChatMessage, ModelAdapter};
@@ -59,6 +65,32 @@ struct TranscriptEntry {
     body: String,
 }
 
+struct PendingApproval {
+    request: PermissionPromptRequest,
+    responder: Option<oneshot::Sender<PermissionPromptDecision>>,
+    select_allow: bool,
+}
+
+enum TurnEvent {
+    ToolStart {
+        tool_name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_name: String,
+        output: String,
+        is_error: bool,
+    },
+    Assistant(String),
+    Progress(String),
+    Approval {
+        request: PermissionPromptRequest,
+        responder: oneshot::Sender<PermissionPromptDecision>,
+    },
+    Done(Vec<ChatMessage>),
+    ToolDone(crate::tool::ToolResult),
+}
+
 #[derive(Default)]
 struct ScreenState {
     input: String,
@@ -74,6 +106,7 @@ struct ScreenState {
     history_draft: String,
     is_busy: bool,
     message_count: usize,
+    pending_approval: Option<PendingApproval>,
 }
 
 pub struct TuiAppArgs {
@@ -84,50 +117,32 @@ pub struct TuiAppArgs {
     pub permissions: PermissionManager,
 }
 
-struct TuiCallbacks<'a> {
-    state: &'a mut ScreenState,
+struct ChannelCallbacks {
+    tx: mpsc::UnboundedSender<TurnEvent>,
 }
 
-impl<'a> AgentTurnCallbacks for TuiCallbacks<'a> {
+impl AgentTurnCallbacks for ChannelCallbacks {
     fn on_tool_start(&mut self, tool_name: &str, input: &serde_json::Value) {
-        self.state.active_tool = Some(tool_name.to_string());
-        self.state.status = Some(format!("Running {tool_name}..."));
-        self.state.transcript.push(TranscriptEntry {
-            kind: "tool".to_string(),
-            body: format!("{}\n{}", tool_name, summarize_tool_input(tool_name, input)),
+        let _ = self.tx.send(TurnEvent::ToolStart {
+            tool_name: tool_name.to_string(),
+            input: input.clone(),
         });
-        self.state.transcript_scroll_offset = 0;
     }
 
     fn on_tool_result(&mut self, tool_name: &str, output: &str, is_error: bool) {
-        self.state
-            .recent_tools
-            .push((tool_name.to_string(), !is_error));
-        self.state.transcript.push(TranscriptEntry {
-            kind: if is_error {
-                "tool:error".to_string()
-            } else {
-                "tool".to_string()
-            },
-            body: output.to_string(),
+        let _ = self.tx.send(TurnEvent::ToolResult {
+            tool_name: tool_name.to_string(),
+            output: output.to_string(),
+            is_error,
         });
-        self.state.transcript_scroll_offset = 0;
     }
 
     fn on_assistant_message(&mut self, content: &str) {
-        self.state.transcript.push(TranscriptEntry {
-            kind: "assistant".to_string(),
-            body: content.to_string(),
-        });
-        self.state.transcript_scroll_offset = 0;
+        let _ = self.tx.send(TurnEvent::Assistant(content.to_string()));
     }
 
     fn on_progress_message(&mut self, content: &str) {
-        self.state.transcript.push(TranscriptEntry {
-            kind: "progress".to_string(),
-            body: content.to_string(),
-        });
-        self.state.transcript_scroll_offset = 0;
+        let _ = self.tx.send(TurnEvent::Progress(content.to_string()));
     }
 }
 
@@ -273,21 +288,328 @@ fn build_header_lines(args: &TuiAppArgs, state: &ScreenState) -> Vec<Line<'stati
         .join(", ");
 
     vec![
-        Line::from(format!("model={} | cwd={}", model, args.cwd.display())),
-        Line::from(args.permissions.get_summary().join(" | ")),
-        Line::from(format!(
-            "transcript={} messages={} skills={} mcp={}{}",
-            state.transcript.len(),
-            state.message_count,
-            args.tools.get_skills().len(),
-            args.tools.get_mcp_servers().len(),
+        Line::from(vec![
+            Span::styled(
+                "项目",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::raw(args.cwd.display().to_string()),
+            Span::raw("   "),
+            Span::styled(
+                "模型",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::raw(model),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "会话",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(
+                " messages={} transcript={} skills={} mcp={}",
+                state.message_count,
+                state.transcript.len(),
+                args.tools.get_skills().len(),
+                args.tools.get_mcp_servers().len()
+            )),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "权限",
+                Style::default()
+                    .fg(Color::LightMagenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::raw(args.permissions.get_summary().join(" | ")),
             if recent.is_empty() {
-                String::new()
+                Span::raw("")
             } else {
-                format!(" | recent={}", recent)
-            }
-        )),
+                Span::raw(format!(" | recent={}", recent))
+            },
+        ]),
     ]
+}
+
+fn transcript_title_line(kind: &str) -> Line<'static> {
+    let (label, color) = match kind {
+        "assistant" => ("assistant", Color::Green),
+        "user" => ("you", Color::Cyan),
+        "progress" => ("progress", Color::Yellow),
+        "tool:error" => ("tool err", Color::Red),
+        "tool" => ("tool", Color::Magenta),
+        _ => (kind, Color::Gray),
+    };
+    Line::from(vec![
+        Span::styled("▌", Style::default().fg(color)),
+        Span::raw(" "),
+        Span::styled(
+            label.to_string(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+fn transcript_lines(entries: &[TranscriptEntry]) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for (idx, entry) in entries.iter().enumerate() {
+        if idx > 0 {
+            lines.push(Line::from(""));
+        }
+        lines.push(transcript_title_line(&entry.kind));
+        for line in entry.body.lines() {
+            lines.push(Line::from(format!("  {}", sanitize_line(line))));
+        }
+    }
+    lines
+}
+
+fn build_activity_items(state: &ScreenState) -> Vec<ListItem<'static>> {
+    let mut items = Vec::new();
+    if let Some(tool) = &state.active_tool {
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(
+                "Running",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::raw(tool.clone()),
+        ])));
+    }
+
+    for (name, ok) in state.recent_tools.iter().rev().take(6) {
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(
+                if *ok { "OK" } else { "ERR" },
+                Style::default()
+                    .fg(if *ok { Color::Green } else { Color::Red })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::raw(name.clone()),
+        ])));
+    }
+
+    if items.is_empty() {
+        items.push(ListItem::new("暂无工具活动"));
+    }
+    items
+}
+
+fn input_viewport(input: &str, cursor_offset: usize, max_width: usize) -> (String, usize) {
+    if max_width == 0 {
+        return (String::new(), 0);
+    }
+
+    let chars = input.chars().collect::<Vec<_>>();
+    let cursor = cursor_offset.min(chars.len());
+
+    let mut start = 0usize;
+    let mut used = 0usize;
+    let mut i = cursor;
+    while i > 0 {
+        let ch = chars[i - 1];
+        let w = UnicodeWidthStr::width(ch.to_string().as_str());
+        if used + w > max_width {
+            break;
+        }
+        used += w;
+        i -= 1;
+        start = i;
+    }
+
+    let mut out = String::new();
+    let mut out_width = 0usize;
+    let mut end = start;
+    while end < chars.len() {
+        let w = UnicodeWidthStr::width(chars[end].to_string().as_str());
+        if out_width + w > max_width {
+            break;
+        }
+        out.push(chars[end]);
+        out_width += w;
+        end += 1;
+    }
+
+    let cursor_text = chars[start..cursor].iter().collect::<String>();
+    let cursor_dx = display_width(&cursor_text);
+    (out, cursor_dx)
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
+}
+
+fn apply_turn_event(state: &mut ScreenState, event: TurnEvent) -> Option<Vec<ChatMessage>> {
+    match event {
+        TurnEvent::ToolStart { tool_name, input } => {
+            state.active_tool = Some(tool_name.clone());
+            state.status = Some(format!("Running {tool_name}..."));
+            state.transcript.push(TranscriptEntry {
+                kind: "tool".to_string(),
+                body: format!(
+                    "{}\n{}",
+                    tool_name,
+                    summarize_tool_input(&tool_name, &input)
+                ),
+            });
+            state.transcript_scroll_offset = 0;
+            None
+        }
+        TurnEvent::ToolResult {
+            tool_name,
+            output,
+            is_error,
+        } => {
+            state.recent_tools.push((tool_name, !is_error));
+            state.transcript.push(TranscriptEntry {
+                kind: if is_error {
+                    "tool:error".to_string()
+                } else {
+                    "tool".to_string()
+                },
+                body: output,
+            });
+            state.transcript_scroll_offset = 0;
+            None
+        }
+        TurnEvent::Assistant(content) => {
+            state.transcript.push(TranscriptEntry {
+                kind: "assistant".to_string(),
+                body: content,
+            });
+            state.transcript_scroll_offset = 0;
+            None
+        }
+        TurnEvent::Progress(content) => {
+            state.transcript.push(TranscriptEntry {
+                kind: "progress".to_string(),
+                body: content,
+            });
+            state.transcript_scroll_offset = 0;
+            None
+        }
+        TurnEvent::Approval { request, responder } => {
+            state.pending_approval = Some(PendingApproval {
+                request,
+                responder: Some(responder),
+                select_allow: false,
+            });
+            state.status = Some("等待审批...".to_string());
+            None
+        }
+        TurnEvent::ToolDone(result) => {
+            state.recent_tools.push((
+                state
+                    .active_tool
+                    .clone()
+                    .unwrap_or_else(|| "tool".to_string()),
+                result.ok,
+            ));
+            state.transcript.push(TranscriptEntry {
+                kind: if result.ok {
+                    "tool".to_string()
+                } else {
+                    "tool:error".to_string()
+                },
+                body: result.output,
+            });
+            state.active_tool = None;
+            state.status = None;
+            None
+        }
+        TurnEvent::Done(updated) => Some(updated),
+    }
+}
+
+fn handle_approval_key(state: &mut ScreenState, key: KeyEvent) -> bool {
+    let Some(pending) = state.pending_approval.as_mut() else {
+        return false;
+    };
+
+    match key.code {
+        KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
+            pending.select_allow = !pending.select_allow;
+            true
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            pending.select_allow = true;
+            true
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            pending.select_allow = false;
+            true
+        }
+        KeyCode::Enter => {
+            if let Some(tx) = pending.responder.take() {
+                let _ = tx.send(if pending.select_allow {
+                    PermissionPromptDecision::Allow
+                } else {
+                    PermissionPromptDecision::Deny
+                });
+            }
+            state.pending_approval = None;
+            state.status = Some("Thinking...".to_string());
+            true
+        }
+        KeyCode::Esc => {
+            if let Some(tx) = pending.responder.take() {
+                let _ = tx.send(PermissionPromptDecision::Deny);
+            }
+            state.pending_approval = None;
+            state.status = Some("Thinking...".to_string());
+            true
+        }
+        _ => false,
+    }
+}
+
+fn build_prompt_handler(tx: mpsc::UnboundedSender<TurnEvent>) -> PermissionPromptHandler {
+    Arc::new(move |request| {
+        let event_tx = tx.clone();
+        Box::pin(async move {
+            let (decision_tx, decision_rx) = oneshot::channel();
+            if event_tx
+                .send(TurnEvent::Approval {
+                    request,
+                    responder: decision_tx,
+                })
+                .is_err()
+            {
+                return PermissionPromptDecision::Deny;
+            }
+            match decision_rx.await {
+                Ok(v) => v,
+                Err(_) => PermissionPromptDecision::Deny,
+            }
+        })
+    })
 }
 
 fn render_screen(
@@ -299,7 +621,7 @@ fn render_screen(
     let command_rows = if visible_commands.is_empty() {
         0u16
     } else {
-        (visible_commands.len().min(5) + 2) as u16
+        (visible_commands.len().min(6) + 2) as u16
     };
 
     terminal.draw(|frame| {
@@ -308,99 +630,231 @@ fn render_screen(
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(5),
-                Constraint::Min(8),
+                Constraint::Min(10),
                 Constraint::Length(command_rows),
-                Constraint::Length(3),
+                Constraint::Length(4),
             ])
             .split(area);
 
+        let mid = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+            .split(chunks[1]);
+
         let header = Paragraph::new(build_header_lines(args, state))
-            .block(Block::default().title("MiniCode-RS").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title(" MiniCode-RS ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .style(Style::default().fg(Color::LightCyan)),
+            )
             .wrap(Wrap { trim: true });
         frame.render_widget(header, chunks[0]);
 
-        let feed_lines = render_transcript_lines(&state.transcript)
-            .into_iter()
-            .map(|line| Line::from(sanitize_line(&line)))
-            .collect::<Vec<_>>();
+        let feed_lines = transcript_lines(&state.transcript);
         let fallback = vec![Line::from("(暂无消息，输入 /help 查看命令)")];
         let feed = Paragraph::new(if feed_lines.is_empty() {
             fallback
         } else {
             feed_lines
         })
-        .block(Block::default().title("Session Feed").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Session Feed ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .style(Style::default().fg(Color::Blue)),
+        )
         .wrap(Wrap { trim: false })
         .scroll((state.transcript_scroll_offset as u16, 0));
-        frame.render_widget(feed, chunks[1]);
+        frame.render_widget(feed, mid[0]);
+
+        let activity = List::new(build_activity_items(state)).block(
+            Block::default()
+                .title(" Activity ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .style(Style::default().fg(Color::Magenta)),
+        );
+        frame.render_widget(activity, mid[1]);
 
         if command_rows > 0 {
             let items = visible_commands
                 .iter()
-                .take(5)
-                .enumerate()
-                .map(|(idx, cmd)| {
-                    let marker = if idx == state.selected_slash_index {
-                        ">"
-                    } else {
-                        " "
-                    };
-                    ListItem::new(format!("{} {} - {}", marker, cmd.usage, cmd.description))
+                .take(6)
+                .map(|cmd| {
+                    ListItem::new(Line::from(vec![
+                        Span::styled(
+                            cmd.usage.to_string(),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("  "),
+                        Span::raw(cmd.description.to_string()),
+                    ]))
                 })
                 .collect::<Vec<_>>();
-            let commands =
-                List::new(items).block(Block::default().title("Commands").borders(Borders::ALL));
-            frame.render_widget(commands, chunks[2]);
+
+            let mut list_state = ListState::default();
+            if !visible_commands.is_empty() {
+                list_state.select(Some(
+                    state
+                        .selected_slash_index
+                        .min(visible_commands.len().min(6) - 1),
+                ));
+            }
+
+            let commands = List::new(items)
+                .block(
+                    Block::default()
+                        .title(" Slash Commands ")
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .style(Style::default().fg(Color::LightBlue)),
+                )
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::Rgb(30, 50, 80))
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol("▶ ");
+            frame.render_stateful_widget(commands, chunks[2], &mut list_state);
         }
 
         let prompt_input = sanitize_line(&state.input);
+        let input_box = chunks[3];
+        let available_input_width = input_box.width.saturating_sub(14) as usize;
+        let (display_input, cursor_dx) = input_viewport(
+            &prompt_input,
+            state.cursor_offset,
+            available_input_width.max(1),
+        );
+
         let prompt_text = vec![
             Line::from(format!(
-                "status: {}{}",
+                "status: {}{}{}",
                 state.status.clone().unwrap_or_else(|| "Ready".to_string()),
                 state
                     .active_tool
                     .as_ref()
                     .map(|x| format!(" | active={}", x))
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
+                if state.is_busy {
+                    " | busy".to_string()
+                } else {
+                    String::new()
+                }
             ))
-            .style(Style::default().add_modifier(Modifier::BOLD)),
-            Line::from(format!("mini-code> {}", prompt_input)),
+            .style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::from(vec![
+                Span::styled(
+                    "mini-code> ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(display_input),
+            ]),
+            Line::from(Span::styled(
+                "Enter 发送 | Tab 补全 | PgUp/PgDn 滚动 | Ctrl+C 退出",
+                Style::default().fg(Color::DarkGray),
+            )),
         ];
         let prompt = Paragraph::new(prompt_text)
-            .block(Block::default().title("Input").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title(" Input ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .style(Style::default().fg(Color::Green)),
+            )
             .wrap(Wrap { trim: false });
-        frame.render_widget(prompt, chunks[3]);
+        frame.render_widget(prompt, input_box);
 
-        let prompt_area: Rect = chunks[3];
+        let prompt_area: Rect = input_box;
         let prefix_width = display_width("mini-code> ") as u16;
-        let cursor_text = state
-            .input
-            .chars()
-            .take(state.cursor_offset.min(char_len(&state.input)))
-            .collect::<String>();
-        let cursor_dx = display_width(&cursor_text) as u16;
-        let cursor_x = (prompt_area.x + 1 + prefix_width + cursor_dx)
+        let cursor_x = (prompt_area.x + 1 + prefix_width + cursor_dx as u16)
             .min(prompt_area.x + prompt_area.width.saturating_sub(2));
         let cursor_y =
             (prompt_area.y + 2).min(prompt_area.y + prompt_area.height.saturating_sub(1));
+
+        if let Some(pending) = &state.pending_approval {
+            let popup = centered_rect(70, 45, area);
+            frame.render_widget(Clear, popup);
+            let kind = match pending.request.kind {
+                PermissionPromptKind::Path => "PATH",
+                PermissionPromptKind::Command => "COMMAND",
+                PermissionPromptKind::Edit => "EDIT",
+            };
+            let mut lines = vec![Line::from(vec![Span::styled(
+                format!("[{kind}] {}", pending.request.title),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )])];
+            lines.push(Line::from(""));
+            for detail in &pending.request.details {
+                lines.push(Line::from(format!("- {}", sanitize_line(detail))));
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    if pending.select_allow {
+                        "[允许]"
+                    } else {
+                        " 允许 "
+                    },
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(if pending.select_allow {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                ),
+                Span::raw("   "),
+                Span::styled(
+                    if !pending.select_allow {
+                        "[拒绝]"
+                    } else {
+                        " 拒绝 "
+                    },
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(if !pending.select_allow {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "左右/Tab 切换，Enter 确认，Esc 拒绝",
+                Style::default().fg(Color::DarkGray),
+            )));
+
+            let dialog = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title(" 审批 ")
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .style(Style::default().fg(Color::LightRed)),
+                )
+                .wrap(Wrap { trim: true });
+            frame.render_widget(dialog, popup);
+        }
+
         frame.set_cursor_position((cursor_x, cursor_y));
     })?;
     Ok(())
-}
-
-fn render_transcript_lines(entries: &[TranscriptEntry]) -> Vec<String> {
-    let mut lines = vec![];
-    for (idx, entry) in entries.iter().enumerate() {
-        if idx > 0 {
-            lines.push(String::new());
-        }
-        lines.push(format!("[{}]", entry.kind));
-        for line in entry.body.lines() {
-            lines.push(format!("  {}", line));
-        }
-    }
-    lines
 }
 
 fn parse_shortcut_command(input: &str) -> (Option<&'static str>, serde_json::Value) {
@@ -504,6 +958,7 @@ fn parse_shortcut_command(input: &str) -> (Option<&'static str>, serde_json::Val
 }
 
 async fn handle_submit(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     args: &mut TuiAppArgs,
     state: &mut ScreenState,
     messages: &mut Vec<ChatMessage>,
@@ -550,29 +1005,47 @@ async fn handle_submit(
     if let Some(tool_name) = shortcut.0 {
         state.is_busy = true;
         state.status = Some(format!("Running {tool_name}..."));
-        disable_raw_mode()?;
-        let result = args
-            .tools
-            .execute(
-                tool_name,
-                shortcut.1,
-                &ToolContext {
-                    cwd: args.cwd.to_string_lossy().to_string(),
-                    permissions: Some(Arc::new(args.permissions.clone())),
-                },
-            )
-            .await;
-        enable_raw_mode()?;
-        state.is_busy = false;
-        state.status = None;
-        state.transcript.push(TranscriptEntry {
-            kind: if result.ok {
-                "tool".to_string()
-            } else {
-                "tool:error".to_string()
-            },
-            body: result.output,
+        let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
+        let mut task_permissions = args.permissions.clone();
+        task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
+        let tools = args.tools.clone();
+        let cwd = args.cwd.to_string_lossy().to_string();
+        let payload = shortcut.1;
+        let tool_name_owned = tool_name.to_string();
+
+        tokio::spawn(async move {
+            let _ = tx.send(TurnEvent::ToolStart {
+                tool_name: tool_name_owned.clone(),
+                input: payload.clone(),
+            });
+            let result = tools
+                .execute(
+                    &tool_name_owned,
+                    payload,
+                    &ToolContext {
+                        cwd,
+                        permissions: Some(Arc::new(task_permissions)),
+                    },
+                )
+                .await;
+            let _ = tx.send(TurnEvent::ToolDone(result));
         });
+
+        while state.is_busy {
+            while let Ok(event) = rx.try_recv() {
+                let _ = apply_turn_event(state, event);
+                if state.pending_approval.is_none() {
+                    state.is_busy = false;
+                }
+            }
+            render_screen(terminal, args, state)?;
+            if event::poll(Duration::from_millis(60))?
+                && let Event::Key(key) = event::read()?
+                && state.pending_approval.is_some()
+            {
+                let _ = handle_approval_key(state, key);
+            }
+        }
         return Ok(false);
     }
 
@@ -609,27 +1082,57 @@ async fn handle_submit(
     state.status = Some("Thinking...".to_string());
     state.is_busy = true;
 
-    disable_raw_mode()?;
-    let mut callbacks = TuiCallbacks { state };
-    let updated = run_agent_turn(
-        args.model.as_ref(),
-        &args.tools,
-        messages.clone(),
-        ToolContext {
-            cwd: args.cwd.to_string_lossy().to_string(),
-            permissions: Some(Arc::new(args.permissions.clone())),
-        },
-        None,
-        Some(&mut callbacks),
-    )
-    .await;
-    enable_raw_mode()?;
+    let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
+    let mut task_permissions = args.permissions.clone();
+    task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
+    let tools = args.tools.clone();
+    let model = args.model.clone();
+    let current_messages = messages.clone();
+    let cwd = args.cwd.to_string_lossy().to_string();
 
-    *messages = updated;
+    tokio::spawn(async move {
+        let mut callbacks = ChannelCallbacks { tx: tx.clone() };
+        let updated = run_agent_turn(
+            model.as_ref(),
+            &tools,
+            current_messages,
+            ToolContext {
+                cwd,
+                permissions: Some(Arc::new(task_permissions)),
+            },
+            None,
+            Some(&mut callbacks),
+        )
+        .await;
+        let _ = tx.send(TurnEvent::Done(updated));
+    });
+
+    let mut done_messages: Option<Vec<ChatMessage>> = None;
+    while done_messages.is_none() {
+        while let Ok(event) = rx.try_recv() {
+            if let Some(done) = apply_turn_event(state, event) {
+                done_messages = Some(done);
+                break;
+            }
+        }
+
+        render_screen(terminal, args, state)?;
+
+        if done_messages.is_none()
+            && event::poll(Duration::from_millis(60))?
+            && let Event::Key(key) = event::read()?
+            && state.pending_approval.is_some()
+        {
+            let _ = handle_approval_key(state, key);
+        }
+    }
+
+    *messages = done_messages.unwrap_or_default();
     args.permissions.end_turn();
     state.is_busy = false;
     state.status = None;
     state.active_tool = None;
+    state.pending_approval = None;
     Ok(false)
 }
 
@@ -703,9 +1206,14 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
                             state.input.clear();
                             state.cursor_offset = 0;
                             state.selected_slash_index = 0;
-                            should_exit =
-                                handle_submit(&mut args, &mut state, &mut messages, submitted)
-                                    .await?;
+                            should_exit = handle_submit(
+                                &mut terminal,
+                                &mut args,
+                                &mut state,
+                                &mut messages,
+                                submitted,
+                            )
+                            .await?;
                             state.message_count = messages.len();
                         }
                         KeyEvent {

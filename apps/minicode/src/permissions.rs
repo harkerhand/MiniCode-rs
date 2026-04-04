@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 use std::fs;
+use std::future::Future;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -25,6 +28,30 @@ struct PermissionStore {
 }
 
 #[derive(Debug, Clone)]
+pub enum PermissionPromptKind {
+    Path,
+    Command,
+    Edit,
+}
+
+#[derive(Debug, Clone)]
+pub struct PermissionPromptRequest {
+    pub kind: PermissionPromptKind,
+    pub title: String,
+    pub details: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionPromptDecision {
+    Allow,
+    Deny,
+}
+
+type PermissionPromptFuture = Pin<Box<dyn Future<Output = PermissionPromptDecision> + Send>>;
+pub type PermissionPromptHandler =
+    Arc<dyn Fn(PermissionPromptRequest) -> PermissionPromptFuture + Send + Sync>;
+
+#[derive(Clone)]
 pub struct PermissionManager {
     workspace_root: PathBuf,
     allowed_directory_prefixes: HashSet<String>,
@@ -41,6 +68,36 @@ pub struct PermissionManager {
     session_denied_edits: HashSet<String>,
     turn_allowed_edits: HashSet<String>,
     turn_allow_all_edits: bool,
+    prompt_handler: Option<PermissionPromptHandler>,
+}
+
+impl std::fmt::Debug for PermissionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PermissionManager")
+            .field("workspace_root", &self.workspace_root)
+            .field(
+                "allowed_directory_prefixes",
+                &self.allowed_directory_prefixes,
+            )
+            .field("denied_directory_prefixes", &self.denied_directory_prefixes)
+            .field("session_allowed_paths", &self.session_allowed_paths)
+            .field("session_denied_paths", &self.session_denied_paths)
+            .field("allowed_command_patterns", &self.allowed_command_patterns)
+            .field("denied_command_patterns", &self.denied_command_patterns)
+            .field("session_allowed_commands", &self.session_allowed_commands)
+            .field("session_denied_commands", &self.session_denied_commands)
+            .field("allowed_edit_patterns", &self.allowed_edit_patterns)
+            .field("denied_edit_patterns", &self.denied_edit_patterns)
+            .field("session_allowed_edits", &self.session_allowed_edits)
+            .field("session_denied_edits", &self.session_denied_edits)
+            .field("turn_allowed_edits", &self.turn_allowed_edits)
+            .field("turn_allow_all_edits", &self.turn_allow_all_edits)
+            .field(
+                "prompt_handler",
+                &self.prompt_handler.as_ref().map(|_| "<handler>"),
+            )
+            .finish()
+    }
 }
 
 impl PermissionManager {
@@ -62,7 +119,24 @@ impl PermissionManager {
             session_denied_edits: HashSet::new(),
             turn_allowed_edits: HashSet::new(),
             turn_allow_all_edits: false,
+            prompt_handler: None,
         })
+    }
+
+    pub fn set_prompt_handler(&mut self, handler: PermissionPromptHandler) {
+        self.prompt_handler = Some(handler);
+    }
+
+    async fn prompt_or_confirm(
+        &self,
+        request: PermissionPromptRequest,
+        fallback_prompt: &str,
+    ) -> Result<bool> {
+        if let Some(handler) = &self.prompt_handler {
+            let decision = handler(request).await;
+            return Ok(matches!(decision, PermissionPromptDecision::Allow));
+        }
+        Self::confirm(fallback_prompt)
     }
 
     pub fn begin_turn(&mut self) {
@@ -134,11 +208,24 @@ impl PermissionManager {
             return Ok(());
         }
 
-        if Self::confirm(&format!(
-            "允许访问工作区外路径吗？\n- cwd: {}\n- target: {}\n输入 y 允许，其他键拒绝: ",
-            self.workspace_root.display(),
-            target
-        ))? {
+        if self
+            .prompt_or_confirm(
+                PermissionPromptRequest {
+                    kind: PermissionPromptKind::Path,
+                    title: "允许访问工作区外路径吗？".to_string(),
+                    details: vec![
+                        format!("cwd: {}", self.workspace_root.display()),
+                        format!("target: {}", target),
+                    ],
+                },
+                &format!(
+                    "允许访问工作区外路径吗？\n- cwd: {}\n- target: {}\n输入 y 允许，其他键拒绝: ",
+                    self.workspace_root.display(),
+                    target
+                ),
+            )
+            .await?
+        {
             return Ok(());
         }
 
@@ -170,11 +257,24 @@ impl PermissionManager {
             return Ok(());
         }
 
-        if Self::confirm(&format!(
-            "检测到高风险命令，是否允许执行？\n- command: {}\n- reason: {}\n输入 y 允许，其他键拒绝: ",
-            signature,
-            dangerous.unwrap_or_default()
-        ))? {
+        if self
+            .prompt_or_confirm(
+                PermissionPromptRequest {
+                    kind: PermissionPromptKind::Command,
+                    title: "检测到高风险命令，是否允许执行？".to_string(),
+                    details: vec![
+                        format!("command: {signature}"),
+                        format!("reason: {}", dangerous.clone().unwrap_or_default()),
+                    ],
+                },
+                &format!(
+                    "检测到高风险命令，是否允许执行？\n- command: {}\n- reason: {}\n输入 y 允许，其他键拒绝: ",
+                    signature,
+                    dangerous.unwrap_or_default()
+                ),
+            )
+            .await?
+        {
             return Ok(());
         }
 
@@ -196,10 +296,20 @@ impl PermissionManager {
             return Ok(());
         }
 
-        if Self::confirm(&format!(
-            "允许修改文件吗？\n- file: {}\n输入 y 允许，其他键拒绝。\n",
-            target_path
-        ))? {
+        if self
+            .prompt_or_confirm(
+                PermissionPromptRequest {
+                    kind: PermissionPromptKind::Edit,
+                    title: "允许修改文件吗？".to_string(),
+                    details: vec![format!("file: {target_path}")],
+                },
+                &format!(
+                    "允许修改文件吗？\n- file: {}\n输入 y 允许，其他键拒绝。\n",
+                    target_path
+                ),
+            )
+            .await?
+        {
             return Ok(());
         }
 
