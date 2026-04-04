@@ -14,7 +14,7 @@ Original TypeScript repository: [LiuMengxuan04/MiniCode](https://github.com/LiuM
 
 This document is copied from the original repository and is not fully adapted to every Rust-specific detail yet. The overall architecture and usage remain similar, so use it as a practical reference.
 
-[简体中文](./README.zh-CN.md) | [Architecture](./ARCHITECTURE.md) | [Contributing](./CONTRIBUTING.md) | [Roadmap](./ROADMAP.md) | [Learn Claude Code Design Through MiniCode](./CLAUDE_CODE_PATTERNS.md) | [License](./LICENSE)
+[简体中文](./README.zh-CN.md) | [Architecture](./docs/ARCHITECTURE.md) | [Contributing](./CONTRIBUTING.md) | [Roadmap](./ROADMAP.md) | [Learn Claude Code Design Through MiniCode](./CLAUDE_CODE_PATTERNS.md) | [License](./LICENSE)
 
 A lightweight terminal coding assistant for local development workflows.
 
@@ -426,8 +426,8 @@ If you want to study the project as a learning resource, continue with:
 
 ## Architecture Docs
 
-- [Architecture Overview](./ARCHITECTURE.md)
-- [中文架构说明](./ARCHITECTURE_ZH.md)
+- [Architecture Overview](./docs/ARCHITECTURE.md)
+- [中文架构说明](./docs/ARCHITECTURE.zh-CN.md)
 
 ## Contributing
 

@@ -14,7 +14,7 @@
 
 以下文档从原版仓库拷贝而来，不完全适配 Rust 版本的细节，但整体架构和使用方式是类似的。请根据实际情况参考。
 
-[English](./README.md) | [架构说明](./ARCHITECTURE_ZH.md) | [贡献规范](./CONTRIBUTING_ZH.md) | [路线图](./ROADMAP_ZH.md) | [通过 MiniCode 学习 Claude Code 设计](./CLAUDE_CODE_PATTERNS_ZH.md) | [License](./LICENSE)
+[English](./README.md) | [架构说明](./docs/ARCHITECTURE.zh-CN.md) | [贡献规范](./CONTRIBUTING_ZH.md) | [路线图](./ROADMAP_ZH.md) | [通过 MiniCode 学习 Claude Code 设计](./CLAUDE_CODE_PATTERNS_ZH.md) | [License](./LICENSE)
 
 一个面向本地开发工作流的轻量级终端编码助手。
 
@@ -426,8 +426,8 @@ MiniCode 当前主要支持：
 
 ## 架构文档
 
-- [Architecture Overview](./ARCHITECTURE.md)
-- [中文架构说明](./ARCHITECTURE_ZH.md)
+- [Architecture Overview](./docs/ARCHITECTURE.md)
+- [中文架构说明](./docs/ARCHITECTURE.zh-CN.md)
 
 ## 贡献规范
 

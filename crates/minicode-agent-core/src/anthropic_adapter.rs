@@ -90,7 +90,7 @@ impl AnthropicModelAdapter {
             return ms;
         }
         let base = (BASE_RETRY_DELAY_MS
-            * (2u64.saturating_pow((attempt.saturating_sub(1)) as u32)))
+            * (2u64.saturating_pow(attempt.saturating_sub(1) as u32)))
         .min(MAX_RETRY_DELAY_MS);
         let mut rng = rand::rng();
         let jitter: f64 = rng.random_range(0.0..0.25);
@@ -113,7 +113,7 @@ impl AnthropicModelAdapter {
     }
 
     /// 将内部消息格式转换为 Anthropic 请求消息。
-    fn to_anthropic_messages(messages: &[ChatMessage]) -> (String, Vec<AnthropicMessage>) {
+    fn parse_anthropic_messages(messages: &[ChatMessage]) -> (String, Vec<AnthropicMessage>) {
         let mut system = vec![];
         let mut converted: Vec<AnthropicMessage> = vec![];
 
@@ -194,7 +194,7 @@ impl ModelAdapter for AnthropicModelAdapter {
     /// 请求模型下一步输出，并解析为助手消息或工具调用。
     async fn next(&self, messages: &[ChatMessage]) -> Result<AgentStep> {
         let runtime = self.get_runtime().await?;
-        let (system, anth_messages) = Self::to_anthropic_messages(messages);
+        let (system, anth_messages) = Self::parse_anthropic_messages(messages);
 
         let tool_defs: Vec<Value> = self
             .tools
