@@ -1,5 +1,5 @@
 [workspace]
-members = []
+members = ["apps/minicode"]
 resolver = "2"
 
 [workspace.package]
