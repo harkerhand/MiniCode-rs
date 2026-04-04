@@ -71,6 +71,11 @@ type PermissionPromptFuture = Pin<Box<dyn Future<Output = PermissionPromptResult
 pub type PermissionPromptHandler =
     Arc<dyn Fn(PermissionPromptRequest) -> PermissionPromptFuture + Send + Sync>;
 
+#[derive(Debug, Clone, Default)]
+pub struct EnsureCommandOptions {
+    pub force_prompt_reason: Option<String>,
+}
+
 #[derive(Debug, Default)]
 struct PermissionState {
     allowed_directory_prefixes: HashSet<String>,
@@ -116,10 +121,12 @@ impl std::fmt::Debug for PermissionManager {
 impl PermissionManager {
     pub fn new(workspace_root: PathBuf) -> Result<Self> {
         let store = read_store()?;
-        eprintln!("📋 Permission store loaded: dirs={}, cmds={}, edits={}",
+        eprintln!(
+            "📋 Permission store loaded: dirs={}, cmds={}, edits={}",
             store.allowed_directory_prefixes.len(),
             store.allowed_command_patterns.len(),
-            store.allowed_edit_patterns.len());
+            store.allowed_edit_patterns.len()
+        );
 
         let state = PermissionState {
             allowed_directory_prefixes: store.allowed_directory_prefixes.into_iter().collect(),
@@ -355,12 +362,19 @@ impl PermissionManager {
         command: &str,
         args: &[String],
         command_cwd: &str,
+        options: Option<EnsureCommandOptions>,
     ) -> Result<()> {
         self.ensure_path_access(command_cwd, "command_cwd").await?;
         let signature = format!("{} {}", command, args.join(" ")).trim().to_string();
 
         let dangerous = classify_dangerous_command(command, args);
-        if dangerous.is_none() {
+        let force_reason = options
+            .and_then(|x| x.force_prompt_reason)
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty());
+        let reason = force_reason.clone().or(dangerous.clone());
+
+        if reason.is_none() {
             return Ok(());
         }
 
@@ -385,11 +399,15 @@ impl PermissionManager {
             .prompt_or_confirm(
                 PermissionPromptRequest {
                     kind: PermissionPromptKind::Command,
-                    title: "mini-code 想执行高风险命令".to_string(),
+                    title: if force_reason.is_some() {
+                        "mini-code 想执行未登记命令".to_string()
+                    } else {
+                        "mini-code 想执行高风险命令".to_string()
+                    },
                     details: vec![
                         format!("cwd: {command_cwd}"),
                         format!("command: {signature}"),
-                        format!("reason: {}", dangerous.clone().unwrap_or_default()),
+                        format!("reason: {}", reason.clone().unwrap_or_default()),
                     ],
                     scope: signature.clone(),
                     choices: vec![
@@ -416,9 +434,9 @@ impl PermissionManager {
                     ],
                 },
                 &format!(
-                    "检测到高风险命令，是否允许执行？\n- command: {}\n- reason: {}\n输入 y 允许，其他键拒绝: ",
+                    "检测到需要审批的命令，是否允许执行？\n- command: {}\n- reason: {}\n输入 y 允许，其他键拒绝: ",
                     signature,
-                    dangerous.unwrap_or_default()
+                    reason.unwrap_or_default()
                 ),
                 PermissionDecision::AllowOnce,
                 PermissionDecision::DenyOnce,
@@ -615,8 +633,10 @@ impl PermissionManager {
         let is_tty_out = io::stdout().is_terminal();
 
         if !is_tty_in || !is_tty_out {
-            eprintln!("⚠️  Warning: TTY not available (stdin: {}, stdout: {}). Permission denied by default.",
-                is_tty_in, is_tty_out);
+            eprintln!(
+                "⚠️  Warning: TTY not available (stdin: {}, stdout: {}). Permission denied by default.",
+                is_tty_in, is_tty_out
+            );
             return Ok(false);
         }
 
@@ -706,7 +726,11 @@ mod tests {
 
     #[test]
     fn test_classify_dangerous_command_git_checkout() {
-        let args = vec!["checkout".to_string(), "--".to_string(), "file.txt".to_string()];
+        let args = vec![
+            "checkout".to_string(),
+            "--".to_string(),
+            "file.txt".to_string(),
+        ];
         let result = classify_dangerous_command("git", &args);
         assert!(result.is_some());
         assert!(result.unwrap().contains("git checkout --"));
@@ -714,7 +738,11 @@ mod tests {
 
     #[test]
     fn test_classify_dangerous_command_git_restore_source() {
-        let args = vec!["restore".to_string(), "--source".to_string(), "HEAD".to_string()];
+        let args = vec![
+            "restore".to_string(),
+            "--source".to_string(),
+            "HEAD".to_string(),
+        ];
         let result = classify_dangerous_command("git", &args);
         assert!(result.is_some());
         assert!(result.unwrap().contains("git restore --source"));
@@ -776,4 +804,3 @@ mod tests {
         let _ = is_within_directory(&root, &target);
     }
 }
-

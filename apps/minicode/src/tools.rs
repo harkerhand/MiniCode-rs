@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::process::Stdio;
 use std::sync::Arc;
 
@@ -12,6 +11,7 @@ use crate::background_tasks::register_background_shell_task;
 use crate::config::RuntimeConfig;
 use crate::file_review::apply_reviewed_file_change;
 use crate::mcp::{create_mcp_backed_tools, extend_registry_with_mcp};
+use crate::permissions::EnsureCommandOptions;
 use crate::skills::{discover_skills, load_skill};
 use crate::tool::{Tool, ToolContext, ToolRegistry, ToolResult};
 use crate::workspace::resolve_tool_path;
@@ -418,6 +418,37 @@ fn looks_like_shell_snippet(command: &str, args: &[String]) -> bool {
     command.chars().any(|c| "|&;<>()$`".contains(c))
 }
 
+fn is_allowed_command(command: &str) -> bool {
+    is_read_only_command(command)
+        || matches!(
+            command,
+            "git" | "npm" | "node" | "python3" | "pytest" | "bash" | "sh" | "bun"
+        )
+}
+
+fn is_read_only_command(command: &str) -> bool {
+    matches!(
+        command,
+        "pwd"
+            | "ls"
+            | "find"
+            | "rg"
+            | "grep"
+            | "cat"
+            | "head"
+            | "tail"
+            | "wc"
+            | "sed"
+            | "echo"
+            | "df"
+            | "du"
+            | "free"
+            | "uname"
+            | "uptime"
+            | "whoami"
+    )
+}
+
 fn is_background_shell_snippet(command: &str, args: &[String]) -> bool {
     if !args.is_empty() {
         return false;
@@ -462,19 +493,9 @@ impl Tool for RunCommandTool {
             (parts[0].clone(), parts[1..].to_vec())
         };
 
-        let allowlist: HashSet<&str> = [
-            "pwd", "ls", "find", "rg", "cat", "echo", "env", "grep", "git", "npm", "node",
-            "python3", "pytest", "bash", "sh", "bun", "sed", "head", "tail", "wc",
-        ]
-        .into_iter()
-        .collect();
-
         let use_shell = looks_like_shell_snippet(&parsed.command, &args);
         let background = is_background_shell_snippet(&parsed.command, &args);
-
-        if !use_shell && !allowlist.contains(command.as_str()) {
-            return ToolResult::err(format!("Command not allowed: {}", command));
-        }
+        let known_command = is_allowed_command(&command);
 
         let exec = if use_shell {
             "bash".to_string()
@@ -497,12 +518,37 @@ impl Tool for RunCommandTool {
             args.clone()
         };
 
-        if let Some(perms) = &context.permissions
-            && let Err(err) = perms
-                .ensure_command(&exec, &exec_args, effective_cwd.to_string_lossy().as_ref())
-                .await
-        {
-            return ToolResult::err(err.to_string());
+        if let Some(perms) = &context.permissions {
+            let approval = if !use_shell && !known_command {
+                perms
+                    .ensure_command(
+                        &exec,
+                        &exec_args,
+                        effective_cwd.to_string_lossy().as_ref(),
+                        Some(EnsureCommandOptions {
+                            force_prompt_reason: Some(format!(
+                                "Unknown command '{}' is not in the built-in read-only/development set",
+                                command
+                            )),
+                        }),
+                    )
+                    .await
+            } else if use_shell || !is_read_only_command(&command) {
+                perms
+                    .ensure_command(
+                        &exec,
+                        &exec_args,
+                        effective_cwd.to_string_lossy().as_ref(),
+                        None,
+                    )
+                    .await
+            } else {
+                Ok(())
+            };
+
+            if let Err(err) = approval {
+                return ToolResult::err(err.to_string());
+            }
         }
 
         if use_shell && background {
