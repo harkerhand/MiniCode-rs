@@ -25,12 +25,14 @@ use tokio::sync::{mpsc, oneshot};
 use unicode_width::UnicodeWidthStr;
 
 use crate::agent_loop::{AgentTurnCallbacks, run_agent_turn};
+use crate::background_tasks::list_background_tasks;
 use crate::cli_commands::{SLASH_COMMANDS, find_matching_slash_commands, try_handle_local_command};
 use crate::config::RuntimeConfig;
 use crate::history::{load_history_entries, save_history_entries};
+use crate::local_tool_shortcuts::parse_local_tool_shortcut;
 use crate::permissions::{
-    PermissionManager, PermissionPromptDecision, PermissionPromptHandler, PermissionPromptKind,
-    PermissionPromptRequest,
+    PermissionDecision, PermissionManager, PermissionPromptHandler, PermissionPromptKind,
+    PermissionPromptRequest, PermissionPromptResult,
 };
 use crate::prompt::build_system_prompt;
 use crate::tool::{ToolContext, ToolRegistry};
@@ -67,8 +69,10 @@ struct TranscriptEntry {
 
 struct PendingApproval {
     request: PermissionPromptRequest,
-    responder: Option<oneshot::Sender<PermissionPromptDecision>>,
-    select_allow: bool,
+    responder: Option<oneshot::Sender<PermissionPromptResult>>,
+    selected_index: usize,
+    awaiting_feedback: bool,
+    feedback: String,
 }
 
 enum TurnEvent {
@@ -85,7 +89,7 @@ enum TurnEvent {
     Progress(String),
     Approval {
         request: PermissionPromptRequest,
-        responder: oneshot::Sender<PermissionPromptDecision>,
+        responder: oneshot::Sender<PermissionPromptResult>,
     },
     Done(Vec<ChatMessage>),
     ToolDone(crate::tool::ToolResult),
@@ -404,6 +408,32 @@ fn build_activity_items(state: &ScreenState) -> Vec<ListItem<'static>> {
     if items.is_empty() {
         items.push(ListItem::new("暂无工具活动"));
     }
+
+    let tasks = list_background_tasks();
+    if !tasks.is_empty() {
+        items.push(ListItem::new(Line::from("")));
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "后台任务",
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        )])));
+        for task in tasks.iter().rev().take(4) {
+            let color = match task.status.as_str() {
+                "running" => Color::Yellow,
+                "completed" => Color::Green,
+                _ => Color::Red,
+            };
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{}", task.status),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::raw(format!("pid={} {}", task.pid, task.command)),
+            ])));
+        }
+    }
     items
 }
 
@@ -519,7 +549,9 @@ fn apply_turn_event(state: &mut ScreenState, event: TurnEvent) -> Option<Vec<Cha
             state.pending_approval = Some(PendingApproval {
                 request,
                 responder: Some(responder),
-                select_allow: false,
+                selected_index: 0,
+                awaiting_feedback: false,
+                feedback: String::new(),
             });
             state.status = Some("等待审批...".to_string());
             None
@@ -553,25 +585,81 @@ fn handle_approval_key(state: &mut ScreenState, key: KeyEvent) -> bool {
         return false;
     };
 
+    let choices_len = pending.request.choices.len();
+    if choices_len == 0 {
+        return false;
+    }
+
+    let selected_decision = pending.request.choices[pending.selected_index].decision;
+
+    if pending.awaiting_feedback {
+        match key.code {
+            KeyCode::Enter => {
+                if let Some(tx) = pending.responder.take() {
+                    let _ = tx.send(PermissionPromptResult {
+                        decision: PermissionDecision::DenyWithFeedback,
+                        feedback: Some(pending.feedback.clone()),
+                    });
+                }
+                state.pending_approval = None;
+                state.status = Some("Thinking...".to_string());
+                return true;
+            }
+            KeyCode::Backspace => {
+                pending.feedback.pop();
+                return true;
+            }
+            KeyCode::Esc => {
+                pending.awaiting_feedback = false;
+                pending.feedback.clear();
+                return true;
+            }
+            KeyCode::Char(ch) => {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    pending.feedback.push(ch);
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        return false;
+    }
+
     match key.code {
-        KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
-            pending.select_allow = !pending.select_allow;
+        KeyCode::Left | KeyCode::Up => {
+            pending.selected_index = if pending.selected_index == 0 {
+                choices_len - 1
+            } else {
+                pending.selected_index - 1
+            };
             true
         }
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
-            pending.select_allow = true;
+        KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
+            pending.selected_index = (pending.selected_index + 1) % choices_len;
             true
         }
-        KeyCode::Char('n') | KeyCode::Char('N') => {
-            pending.select_allow = false;
-            true
+        KeyCode::Char(ch) => {
+            let lower = ch.to_ascii_lowercase().to_string();
+            if let Some(idx) = pending
+                .request
+                .choices
+                .iter()
+                .position(|c| c.key.eq_ignore_ascii_case(&lower))
+            {
+                pending.selected_index = idx;
+                return true;
+            }
+            false
         }
         KeyCode::Enter => {
+            if selected_decision == PermissionDecision::DenyWithFeedback {
+                pending.awaiting_feedback = true;
+                return true;
+            }
             if let Some(tx) = pending.responder.take() {
-                let _ = tx.send(if pending.select_allow {
-                    PermissionPromptDecision::Allow
-                } else {
-                    PermissionPromptDecision::Deny
+                let _ = tx.send(PermissionPromptResult {
+                    decision: selected_decision,
+                    feedback: None,
                 });
             }
             state.pending_approval = None;
@@ -580,7 +668,10 @@ fn handle_approval_key(state: &mut ScreenState, key: KeyEvent) -> bool {
         }
         KeyCode::Esc => {
             if let Some(tx) = pending.responder.take() {
-                let _ = tx.send(PermissionPromptDecision::Deny);
+                let _ = tx.send(PermissionPromptResult {
+                    decision: PermissionDecision::DenyOnce,
+                    feedback: None,
+                });
             }
             state.pending_approval = None;
             state.status = Some("Thinking...".to_string());
@@ -602,11 +693,17 @@ fn build_prompt_handler(tx: mpsc::UnboundedSender<TurnEvent>) -> PermissionPromp
                 })
                 .is_err()
             {
-                return PermissionPromptDecision::Deny;
+                return PermissionPromptResult {
+                    decision: PermissionDecision::DenyOnce,
+                    feedback: None,
+                };
             }
             match decision_rx.await {
                 Ok(v) => v,
-                Err(_) => PermissionPromptDecision::Deny,
+                Err(_) => PermissionPromptResult {
+                    decision: PermissionDecision::DenyOnce,
+                    feedback: None,
+                },
             }
         })
     })
@@ -803,40 +900,56 @@ fn render_screen(
             for detail in &pending.request.details {
                 lines.push(Line::from(format!("- {}", sanitize_line(detail))));
             }
+            lines.push(Line::from(format!(
+                "- scope: {}",
+                sanitize_line(&pending.request.scope)
+            )));
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled(
-                    if pending.select_allow {
-                        "[允许]"
-                    } else {
-                        " 允许 "
-                    },
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(if pending.select_allow {
+            for (idx, choice) in pending.request.choices.iter().enumerate() {
+                let selected = idx == pending.selected_index;
+                let color = match choice.decision {
+                    PermissionDecision::AllowOnce
+                    | PermissionDecision::AllowAlways
+                    | PermissionDecision::AllowTurn
+                    | PermissionDecision::AllowAllTurn => Color::Green,
+                    PermissionDecision::DenyWithFeedback => Color::LightYellow,
+                    PermissionDecision::DenyOnce | PermissionDecision::DenyAlways => Color::Red,
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        if selected { "▶" } else { " " },
+                        Style::default().fg(Color::LightBlue),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("({})", choice.key),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        choice.label.clone(),
+                        Style::default().fg(color).add_modifier(if selected {
                             Modifier::BOLD
                         } else {
                             Modifier::empty()
                         }),
-                ),
-                Span::raw("   "),
-                Span::styled(
-                    if !pending.select_allow {
-                        "[拒绝]"
-                    } else {
-                        " 拒绝 "
-                    },
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(if !pending.select_allow {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                ),
-            ]));
+                    ),
+                ]));
+            }
+
+            if pending.awaiting_feedback {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "请输入指导建议（Enter 提交，Esc 取消）：",
+                    Style::default().fg(Color::Yellow),
+                )));
+                lines.push(Line::from(Span::styled(
+                    sanitize_line(&pending.feedback),
+                    Style::default().fg(Color::White).bg(Color::Rgb(40, 40, 65)),
+                )));
+            }
             lines.push(Line::from(Span::styled(
-                "左右/Tab 切换，Enter 确认，Esc 拒绝",
+                "方向键/Tab切换，数字键直选，Enter确认，Esc拒绝",
                 Style::default().fg(Color::DarkGray),
             )));
 
@@ -855,106 +968,6 @@ fn render_screen(
         frame.set_cursor_position((cursor_x, cursor_y));
     })?;
     Ok(())
-}
-
-fn parse_shortcut_command(input: &str) -> (Option<&'static str>, serde_json::Value) {
-    if input == "/ls" {
-        return (Some("list_files"), serde_json::json!({ "path": "." }));
-    }
-    if let Some(path) = input.strip_prefix("/ls ") {
-        return (
-            Some("list_files"),
-            serde_json::json!({ "path": path.trim() }),
-        );
-    }
-
-    if let Some(rest) = input.strip_prefix("/grep ") {
-        let parts = rest.split("::").collect::<Vec<_>>();
-        if parts.len() == 2 {
-            return (
-                Some("grep_files"),
-                serde_json::json!({ "pattern": parts[0].trim(), "path": parts[1].trim() }),
-            );
-        }
-        return (
-            Some("grep_files"),
-            serde_json::json!({ "pattern": rest.trim() }),
-        );
-    }
-
-    if let Some(path) = input.strip_prefix("/read ") {
-        return (
-            Some("read_file"),
-            serde_json::json!({ "path": path.trim() }),
-        );
-    }
-
-    if let Some(rest) = input.strip_prefix("/write ") {
-        let parts = rest.splitn(2, "::").collect::<Vec<_>>();
-        if parts.len() == 2 {
-            return (
-                Some("write_file"),
-                serde_json::json!({ "path": parts[0].trim(), "content": parts[1] }),
-            );
-        }
-    }
-
-    if let Some(rest) = input.strip_prefix("/modify ") {
-        let parts = rest.splitn(2, "::").collect::<Vec<_>>();
-        if parts.len() == 2 {
-            return (
-                Some("modify_file"),
-                serde_json::json!({ "path": parts[0].trim(), "content": parts[1] }),
-            );
-        }
-    }
-
-    if let Some(rest) = input.strip_prefix("/edit ") {
-        let parts = rest.splitn(3, "::").collect::<Vec<_>>();
-        if parts.len() == 3 {
-            return (
-                Some("edit_file"),
-                serde_json::json!({
-                    "path": parts[0].trim(),
-                    "search": parts[1],
-                    "replace": parts[2]
-                }),
-            );
-        }
-    }
-
-    if let Some(rest) = input.strip_prefix("/patch ") {
-        let parts = rest.split("::").collect::<Vec<_>>();
-        if parts.len() >= 3 && parts.len() % 2 == 1 {
-            let path = parts[0].trim();
-            let mut replacements = vec![];
-            let mut i = 1;
-            while i + 1 < parts.len() {
-                replacements
-                    .push(serde_json::json!({ "search": parts[i], "replace": parts[i + 1] }));
-                i += 2;
-            }
-            return (
-                Some("patch_file"),
-                serde_json::json!({ "path": path, "replacements": replacements }),
-            );
-        }
-    }
-
-    if let Some(rest) = input.strip_prefix("/cmd ") {
-        if let Some((cwd, cmd)) = rest.split_once("::") {
-            return (
-                Some("run_command"),
-                serde_json::json!({ "cwd": cwd.trim(), "command": cmd.trim() }),
-            );
-        }
-        return (
-            Some("run_command"),
-            serde_json::json!({ "command": rest.trim() }),
-        );
-    }
-
-    (None, serde_json::Value::Null)
 }
 
 async fn handle_submit(
@@ -1001,17 +1014,16 @@ async fn handle_submit(
         return Ok(false);
     }
 
-    let shortcut = parse_shortcut_command(&input);
-    if let Some(tool_name) = shortcut.0 {
+    if let Some(shortcut) = parse_local_tool_shortcut(&input) {
         state.is_busy = true;
-        state.status = Some(format!("Running {tool_name}..."));
+        state.status = Some(format!("Running {}...", shortcut.tool_name));
         let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
-        let mut task_permissions = args.permissions.clone();
+        let task_permissions = args.permissions.clone();
         task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
         let tools = args.tools.clone();
         let cwd = args.cwd.to_string_lossy().to_string();
-        let payload = shortcut.1;
-        let tool_name_owned = tool_name.to_string();
+        let payload = shortcut.input;
+        let tool_name_owned = shortcut.tool_name.to_string();
 
         tokio::spawn(async move {
             let _ = tx.send(TurnEvent::ToolStart {
@@ -1083,7 +1095,7 @@ async fn handle_submit(
     state.is_busy = true;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
-    let mut task_permissions = args.permissions.clone();
+    let task_permissions = args.permissions.clone();
     task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
     let tools = args.tools.clone();
     let model = args.model.clone();

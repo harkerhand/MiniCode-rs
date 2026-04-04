@@ -1,20 +1,19 @@
 use std::collections::HashSet;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
-use uuid::Uuid;
 
+use crate::background_tasks::register_background_shell_task;
 use crate::config::RuntimeConfig;
 use crate::file_review::apply_reviewed_file_change;
 use crate::mcp::{create_mcp_backed_tools, extend_registry_with_mcp};
 use crate::skills::{discover_skills, load_skill};
-use crate::tool::{BackgroundTaskResult, Tool, ToolContext, ToolRegistry, ToolResult};
+use crate::tool::{Tool, ToolContext, ToolRegistry, ToolResult};
 use crate::workspace::resolve_tool_path;
 
 #[derive(Default)]
@@ -184,15 +183,18 @@ impl Tool for ReadFileTool {
             Ok(v) => v,
             Err(err) => return ToolResult::err(err.to_string()),
         };
-        let end = (offset + limit).min(content.len());
-        let chunk = content.get(offset..end).unwrap_or("");
-        let truncated = end < content.len();
+        let chars = content.chars().collect::<Vec<_>>();
+        let total_chars = chars.len();
+        let safe_offset = offset.min(total_chars);
+        let end = safe_offset.saturating_add(limit).min(total_chars);
+        let chunk = chars[safe_offset..end].iter().collect::<String>();
+        let truncated = end < total_chars;
         let header = format!(
             "FILE: {}\nOFFSET: {}\nEND: {}\nTOTAL_CHARS: {}\nTRUNCATED: {}\n\n",
             path,
-            offset,
+            safe_offset,
             end,
-            content.len(),
+            total_chars,
             if truncated {
                 format!("yes - call read_file again with offset {}", end)
             } else {
@@ -296,6 +298,8 @@ pub struct PatchFileTool;
 struct Replacement {
     search: String,
     replace: String,
+    #[serde(rename = "replaceAll")]
+    replace_all: Option<bool>,
 }
 #[async_trait]
 impl Tool for PatchFileTool {
@@ -306,7 +310,7 @@ impl Tool for PatchFileTool {
         "对单文件执行批量替换。"
     }
     fn input_schema(&self) -> Value {
-        json!({"type":"object","properties":{"path":{"type":"string"},"replacements":{"type":"array","items":{"type":"object","properties":{"search":{"type":"string"},"replace":{"type":"string"}},"required":["search","replace"]}}},"required":["path","replacements"]})
+        json!({"type":"object","properties":{"path":{"type":"string"},"replacements":{"type":"array","items":{"type":"object","properties":{"search":{"type":"string"},"replace":{"type":"string"},"replaceAll":{"type":"boolean"}},"required":["search","replace"]}}},"required":["path","replacements"]})
     }
     async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
         let path = input.get("path").and_then(|x| x.as_str()).unwrap_or("");
@@ -332,7 +336,11 @@ impl Tool for PatchFileTool {
             if !content.contains(&rep.search) {
                 return ToolResult::err(format!("Replacement {} failed: text not found", idx + 1));
             }
-            content = content.replacen(&rep.search, &rep.replace, 1);
+            if rep.replace_all.unwrap_or(false) {
+                content = content.replace(&rep.search, &rep.replace);
+            } else {
+                content = content.replacen(&rep.search, &rep.replace, 1);
+            }
         }
 
         match apply_reviewed_file_change(context, path, &target, &content).await {
@@ -497,23 +505,17 @@ impl Tool for RunCommandTool {
             match cmd.spawn() {
                 Ok(child) => {
                     let pid = child.id().unwrap_or_default() as i32;
-                    let started = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_secs() as i64)
-                        .unwrap_or_default();
-                    let bg = BackgroundTaskResult {
-                        task_id: Uuid::new_v4().to_string(),
-                        r#type: "local_bash".to_string(),
-                        command: parsed
-                            .command
-                            .trim()
-                            .trim_end_matches('&')
-                            .trim()
-                            .to_string(),
+                    let command_text = parsed
+                        .command
+                        .trim()
+                        .trim_end_matches('&')
+                        .trim()
+                        .to_string();
+                    let bg = register_background_shell_task(
+                        &command_text,
                         pid,
-                        status: "running".to_string(),
-                        started_at: started,
-                    };
+                        effective_cwd.to_string_lossy().as_ref(),
+                    );
                     ToolResult {
                         ok: true,
                         output: format!(

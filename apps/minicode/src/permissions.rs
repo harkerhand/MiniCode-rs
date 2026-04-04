@@ -2,9 +2,9 @@ use std::collections::HashSet;
 use std::fs;
 use std::future::Future;
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -39,21 +39,40 @@ pub struct PermissionPromptRequest {
     pub kind: PermissionPromptKind,
     pub title: String,
     pub details: Vec<String>,
+    pub scope: String,
+    pub choices: Vec<PermissionChoice>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PermissionPromptDecision {
-    Allow,
-    Deny,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PermissionDecision {
+    AllowOnce,
+    AllowAlways,
+    AllowTurn,
+    AllowAllTurn,
+    DenyOnce,
+    DenyAlways,
+    DenyWithFeedback,
 }
 
-type PermissionPromptFuture = Pin<Box<dyn Future<Output = PermissionPromptDecision> + Send>>;
+#[derive(Debug, Clone)]
+pub struct PermissionChoice {
+    pub key: String,
+    pub label: String,
+    pub decision: PermissionDecision,
+}
+
+#[derive(Debug, Clone)]
+pub struct PermissionPromptResult {
+    pub decision: PermissionDecision,
+    pub feedback: Option<String>,
+}
+
+type PermissionPromptFuture = Pin<Box<dyn Future<Output = PermissionPromptResult> + Send>>;
 pub type PermissionPromptHandler =
     Arc<dyn Fn(PermissionPromptRequest) -> PermissionPromptFuture + Send + Sync>;
 
-#[derive(Clone)]
-pub struct PermissionManager {
-    workspace_root: PathBuf,
+#[derive(Debug, Default)]
+struct PermissionState {
     allowed_directory_prefixes: HashSet<String>,
     denied_directory_prefixes: HashSet<String>,
     session_allowed_paths: HashSet<String>,
@@ -68,33 +87,27 @@ pub struct PermissionManager {
     session_denied_edits: HashSet<String>,
     turn_allowed_edits: HashSet<String>,
     turn_allow_all_edits: bool,
-    prompt_handler: Option<PermissionPromptHandler>,
+}
+
+#[derive(Clone)]
+pub struct PermissionManager {
+    workspace_root: PathBuf,
+    state: Arc<Mutex<PermissionState>>,
+    prompt_handler: Arc<Mutex<Option<PermissionPromptHandler>>>,
 }
 
 impl std::fmt::Debug for PermissionManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PermissionManager")
             .field("workspace_root", &self.workspace_root)
-            .field(
-                "allowed_directory_prefixes",
-                &self.allowed_directory_prefixes,
-            )
-            .field("denied_directory_prefixes", &self.denied_directory_prefixes)
-            .field("session_allowed_paths", &self.session_allowed_paths)
-            .field("session_denied_paths", &self.session_denied_paths)
-            .field("allowed_command_patterns", &self.allowed_command_patterns)
-            .field("denied_command_patterns", &self.denied_command_patterns)
-            .field("session_allowed_commands", &self.session_allowed_commands)
-            .field("session_denied_commands", &self.session_denied_commands)
-            .field("allowed_edit_patterns", &self.allowed_edit_patterns)
-            .field("denied_edit_patterns", &self.denied_edit_patterns)
-            .field("session_allowed_edits", &self.session_allowed_edits)
-            .field("session_denied_edits", &self.session_denied_edits)
-            .field("turn_allowed_edits", &self.turn_allowed_edits)
-            .field("turn_allow_all_edits", &self.turn_allow_all_edits)
+            .field("state", &"<shared-state>")
             .field(
                 "prompt_handler",
-                &self.prompt_handler.as_ref().map(|_| "<handler>"),
+                &self
+                    .prompt_handler
+                    .lock()
+                    .ok()
+                    .and_then(|x| x.as_ref().map(|_| "<handler>")),
             )
             .finish()
     }
@@ -103,8 +116,7 @@ impl std::fmt::Debug for PermissionManager {
 impl PermissionManager {
     pub fn new(workspace_root: PathBuf) -> Result<Self> {
         let store = read_store()?;
-        Ok(Self {
-            workspace_root,
+        let state = PermissionState {
             allowed_directory_prefixes: store.allowed_directory_prefixes.into_iter().collect(),
             denied_directory_prefixes: store.denied_directory_prefixes.into_iter().collect(),
             session_allowed_paths: HashSet::new(),
@@ -119,69 +131,103 @@ impl PermissionManager {
             session_denied_edits: HashSet::new(),
             turn_allowed_edits: HashSet::new(),
             turn_allow_all_edits: false,
-            prompt_handler: None,
+        };
+        Ok(Self {
+            workspace_root,
+            state: Arc::new(Mutex::new(state)),
+            prompt_handler: Arc::new(Mutex::new(None)),
         })
     }
 
-    pub fn set_prompt_handler(&mut self, handler: PermissionPromptHandler) {
-        self.prompt_handler = Some(handler);
+    pub fn set_prompt_handler(&self, handler: PermissionPromptHandler) {
+        if let Ok(mut slot) = self.prompt_handler.lock() {
+            *slot = Some(handler);
+        }
     }
 
     async fn prompt_or_confirm(
         &self,
         request: PermissionPromptRequest,
         fallback_prompt: &str,
-    ) -> Result<bool> {
-        if let Some(handler) = &self.prompt_handler {
+        fallback_allow: PermissionDecision,
+        fallback_deny: PermissionDecision,
+    ) -> Result<PermissionPromptResult> {
+        let handler = self
+            .prompt_handler
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
+        if let Some(handler) = handler {
             let decision = handler(request).await;
-            return Ok(matches!(decision, PermissionPromptDecision::Allow));
+            return Ok(decision);
         }
-        Self::confirm(fallback_prompt)
+        let allow = Self::confirm(fallback_prompt)?;
+        Ok(PermissionPromptResult {
+            decision: if allow { fallback_allow } else { fallback_deny },
+            feedback: None,
+        })
     }
 
     pub fn begin_turn(&mut self) {
-        self.turn_allowed_edits.clear();
-        self.turn_allow_all_edits = false;
+        if let Ok(mut state) = self.state.lock() {
+            state.turn_allowed_edits.clear();
+            state.turn_allow_all_edits = false;
+        }
     }
 
     pub fn end_turn(&mut self) {
-        self.turn_allowed_edits.clear();
-        self.turn_allow_all_edits = false;
+        if let Ok(mut state) = self.state.lock() {
+            state.turn_allowed_edits.clear();
+            state.turn_allow_all_edits = false;
+        }
     }
 
     pub fn get_summary(&self) -> Vec<String> {
+        let state = self.state.lock().ok();
         let mut summary = vec![format!("cwd: {}", self.workspace_root.display())];
-        if self.allowed_directory_prefixes.is_empty() {
+        let empty_dirs = state
+            .as_ref()
+            .map(|x| x.allowed_directory_prefixes.is_empty())
+            .unwrap_or(true);
+        if empty_dirs {
             summary.push("extra allowed dirs: none".to_string());
         } else {
-            summary.push(format!(
-                "extra allowed dirs: {}",
-                self.allowed_directory_prefixes
-                    .iter()
-                    .take(4)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+            let dirs = state
+                .as_ref()
+                .map(|x| {
+                    x.allowed_directory_prefixes
+                        .iter()
+                        .take(4)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            summary.push(format!("extra allowed dirs: {}", dirs.join(", ")));
         }
-        if self.allowed_command_patterns.is_empty() {
+        let empty_cmds = state
+            .as_ref()
+            .map(|x| x.allowed_command_patterns.is_empty())
+            .unwrap_or(true);
+        if empty_cmds {
             summary.push("dangerous allowlist: none".to_string());
         } else {
-            summary.push(format!(
-                "dangerous allowlist: {}",
-                self.allowed_command_patterns
-                    .iter()
-                    .take(4)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+            let cmds = state
+                .as_ref()
+                .map(|x| {
+                    x.allowed_command_patterns
+                        .iter()
+                        .take(4)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            summary.push(format!("dangerous allowlist: {}", cmds.join(", ")));
         }
         summary
     }
 
     pub async fn ensure_path_access(&self, target_path: &str, _intent: &str) -> Result<()> {
-        let normalized = std::path::Path::new(target_path)
+        let normalized = Path::new(target_path)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(target_path));
 
@@ -190,32 +236,75 @@ impl PermissionManager {
         }
 
         let target = normalized.to_string_lossy().to_string();
-        if self.session_denied_paths.contains(&target)
-            || self
-                .denied_directory_prefixes
-                .iter()
-                .any(|x| target.starts_with(x))
-        {
+        let (already_denied, already_allowed) = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow!("Permission state lock poisoned"))?;
+
+            (
+                state.session_denied_paths.contains(&target)
+                    || state
+                        .denied_directory_prefixes
+                        .iter()
+                        .any(|x| is_within_directory(Path::new(x), &normalized)),
+                state.session_allowed_paths.contains(&target)
+                    || state
+                        .allowed_directory_prefixes
+                        .iter()
+                        .any(|x| is_within_directory(Path::new(x), &normalized)),
+            )
+        };
+
+        if already_denied {
             return Err(anyhow!("Access denied for path outside cwd: {target}"));
         }
-
-        if self.session_allowed_paths.contains(&target)
-            || self
-                .allowed_directory_prefixes
-                .iter()
-                .any(|x| target.starts_with(x))
-        {
+        if already_allowed {
             return Ok(());
         }
 
-        if self
+        let scope_directory = if matches!(_intent, "list" | "command_cwd") {
+            normalized.clone()
+        } else {
+            normalized
+                .parent()
+                .map(|x| x.to_path_buf())
+                .unwrap_or_else(|| normalized.clone())
+        };
+        let scope = scope_directory.to_string_lossy().to_string();
+
+        let prompt_result = self
             .prompt_or_confirm(
                 PermissionPromptRequest {
                     kind: PermissionPromptKind::Path,
-                    title: "允许访问工作区外路径吗？".to_string(),
+                    title: "mini-code 需要访问工作区外路径".to_string(),
                     details: vec![
                         format!("cwd: {}", self.workspace_root.display()),
                         format!("target: {}", target),
+                        format!("scope directory: {}", scope),
+                    ],
+                    scope: scope.clone(),
+                    choices: vec![
+                        PermissionChoice {
+                            key: "y".to_string(),
+                            label: "仅本次允许".to_string(),
+                            decision: PermissionDecision::AllowOnce,
+                        },
+                        PermissionChoice {
+                            key: "a".to_string(),
+                            label: "始终允许此目录".to_string(),
+                            decision: PermissionDecision::AllowAlways,
+                        },
+                        PermissionChoice {
+                            key: "n".to_string(),
+                            label: "仅本次拒绝".to_string(),
+                            decision: PermissionDecision::DenyOnce,
+                        },
+                        PermissionChoice {
+                            key: "d".to_string(),
+                            label: "始终拒绝此目录".to_string(),
+                            decision: PermissionDecision::DenyAlways,
+                        },
                     ],
                 },
                 &format!(
@@ -223,13 +312,37 @@ impl PermissionManager {
                     self.workspace_root.display(),
                     target
                 ),
+                PermissionDecision::AllowOnce,
+                PermissionDecision::DenyOnce,
             )
-            .await?
-        {
-            return Ok(());
-        }
+            .await?;
 
-        Err(anyhow!("Access denied for path outside cwd: {target}"))
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow!("Permission state lock poisoned"))?;
+
+        match prompt_result.decision {
+            PermissionDecision::AllowOnce => {
+                state.session_allowed_paths.insert(target);
+                Ok(())
+            }
+            PermissionDecision::AllowAlways => {
+                state.allowed_directory_prefixes.insert(scope);
+                drop(state);
+                self.persist()
+            }
+            PermissionDecision::DenyAlways => {
+                state.denied_directory_prefixes.insert(scope);
+                drop(state);
+                self.persist()?;
+                Err(anyhow!("Access denied for path outside cwd: {target_path}"))
+            }
+            _ => {
+                state.session_denied_paths.insert(target);
+                Err(anyhow!("Access denied for path outside cwd: {target_path}"))
+            }
+        }
     }
 
     pub async fn ensure_command(
@@ -246,25 +359,55 @@ impl PermissionManager {
             return Ok(());
         }
 
-        if self.session_denied_commands.contains(&signature)
-            || self.denied_command_patterns.contains(&signature)
         {
-            return Err(anyhow!("Command denied: {signature}"));
-        }
-        if self.session_allowed_commands.contains(&signature)
-            || self.allowed_command_patterns.contains(&signature)
-        {
-            return Ok(());
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow!("Permission state lock poisoned"))?;
+            if state.session_denied_commands.contains(&signature)
+                || state.denied_command_patterns.contains(&signature)
+            {
+                return Err(anyhow!("Command denied: {signature}"));
+            }
+            if state.session_allowed_commands.contains(&signature)
+                || state.allowed_command_patterns.contains(&signature)
+            {
+                return Ok(());
+            }
         }
 
-        if self
+        let prompt_result = self
             .prompt_or_confirm(
                 PermissionPromptRequest {
                     kind: PermissionPromptKind::Command,
-                    title: "检测到高风险命令，是否允许执行？".to_string(),
+                    title: "mini-code 想执行高风险命令".to_string(),
                     details: vec![
+                        format!("cwd: {command_cwd}"),
                         format!("command: {signature}"),
                         format!("reason: {}", dangerous.clone().unwrap_or_default()),
+                    ],
+                    scope: signature.clone(),
+                    choices: vec![
+                        PermissionChoice {
+                            key: "y".to_string(),
+                            label: "仅本次允许".to_string(),
+                            decision: PermissionDecision::AllowOnce,
+                        },
+                        PermissionChoice {
+                            key: "a".to_string(),
+                            label: "始终允许此命令".to_string(),
+                            decision: PermissionDecision::AllowAlways,
+                        },
+                        PermissionChoice {
+                            key: "n".to_string(),
+                            label: "仅本次拒绝".to_string(),
+                            decision: PermissionDecision::DenyOnce,
+                        },
+                        PermissionChoice {
+                            key: "d".to_string(),
+                            label: "始终拒绝此命令".to_string(),
+                            decision: PermissionDecision::DenyAlways,
+                        },
                     ],
                 },
                 &format!(
@@ -272,48 +415,171 @@ impl PermissionManager {
                     signature,
                     dangerous.unwrap_or_default()
                 ),
+                PermissionDecision::AllowOnce,
+                PermissionDecision::DenyOnce,
             )
-            .await?
-        {
-            return Ok(());
-        }
+            .await?;
 
-        Err(anyhow!("Command denied: {signature}"))
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow!("Permission state lock poisoned"))?;
+
+        match prompt_result.decision {
+            PermissionDecision::AllowOnce => {
+                state.session_allowed_commands.insert(signature);
+                Ok(())
+            }
+            PermissionDecision::AllowAlways => {
+                state.allowed_command_patterns.insert(signature);
+                drop(state);
+                self.persist()
+            }
+            PermissionDecision::DenyAlways => {
+                state.denied_command_patterns.insert(signature.clone());
+                drop(state);
+                self.persist()?;
+                Err(anyhow!("Command denied: {signature}"))
+            }
+            _ => {
+                state.session_denied_commands.insert(signature.clone());
+                Err(anyhow!("Command denied: {signature}"))
+            }
+        }
     }
 
-    pub async fn ensure_edit(&self, target_path: &str, _diff_preview: &str) -> Result<()> {
-        if self.session_denied_edits.contains(target_path)
-            || self.denied_edit_patterns.contains(target_path)
+    pub async fn ensure_edit(&self, target_path: &str, diff_preview: &str) -> Result<()> {
+        let normalized_target = Path::new(target_path)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(target_path))
+            .to_string_lossy()
+            .to_string();
+
         {
-            return Err(anyhow!("Edit denied: {target_path}"));
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow!("Permission state lock poisoned"))?;
+
+            if state.session_denied_edits.contains(&normalized_target)
+                || state.denied_edit_patterns.contains(&normalized_target)
+            {
+                return Err(anyhow!("Edit denied: {normalized_target}"));
+            }
+
+            if state.turn_allow_all_edits
+                || state.session_allowed_edits.contains(&normalized_target)
+                || state.turn_allowed_edits.contains(&normalized_target)
+                || state.allowed_edit_patterns.contains(&normalized_target)
+            {
+                return Ok(());
+            }
         }
 
-        if self.turn_allow_all_edits
-            || self.session_allowed_edits.contains(target_path)
-            || self.turn_allowed_edits.contains(target_path)
-            || self.allowed_edit_patterns.contains(target_path)
-        {
-            return Ok(());
-        }
-
-        if self
+        let prompt_result = self
             .prompt_or_confirm(
                 PermissionPromptRequest {
                     kind: PermissionPromptKind::Edit,
-                    title: "允许修改文件吗？".to_string(),
-                    details: vec![format!("file: {target_path}")],
+                    title: "mini-code 将应用文件修改".to_string(),
+                    details: vec![
+                        format!("target: {normalized_target}"),
+                        String::new(),
+                        diff_preview.to_string(),
+                    ],
+                    scope: normalized_target.clone(),
+                    choices: vec![
+                        PermissionChoice {
+                            key: "1".to_string(),
+                            label: "仅本次应用".to_string(),
+                            decision: PermissionDecision::AllowOnce,
+                        },
+                        PermissionChoice {
+                            key: "2".to_string(),
+                            label: "本轮允许此文件".to_string(),
+                            decision: PermissionDecision::AllowTurn,
+                        },
+                        PermissionChoice {
+                            key: "3".to_string(),
+                            label: "本轮允许全部修改".to_string(),
+                            decision: PermissionDecision::AllowAllTurn,
+                        },
+                        PermissionChoice {
+                            key: "4".to_string(),
+                            label: "始终允许此文件".to_string(),
+                            decision: PermissionDecision::AllowAlways,
+                        },
+                        PermissionChoice {
+                            key: "5".to_string(),
+                            label: "仅本次拒绝".to_string(),
+                            decision: PermissionDecision::DenyOnce,
+                        },
+                        PermissionChoice {
+                            key: "6".to_string(),
+                            label: "拒绝并提供指导".to_string(),
+                            decision: PermissionDecision::DenyWithFeedback,
+                        },
+                        PermissionChoice {
+                            key: "7".to_string(),
+                            label: "始终拒绝此文件".to_string(),
+                            decision: PermissionDecision::DenyAlways,
+                        },
+                    ],
                 },
                 &format!(
                     "允许修改文件吗？\n- file: {}\n输入 y 允许，其他键拒绝。\n",
-                    target_path
+                    normalized_target
                 ),
+                PermissionDecision::AllowOnce,
+                PermissionDecision::DenyOnce,
             )
-            .await?
-        {
-            return Ok(());
-        }
+            .await?;
 
-        Err(anyhow!("Edit denied: {target_path}"))
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow!("Permission state lock poisoned"))?;
+
+        match prompt_result.decision {
+            PermissionDecision::AllowOnce => {
+                state.session_allowed_edits.insert(normalized_target);
+                Ok(())
+            }
+            PermissionDecision::AllowTurn => {
+                state.turn_allowed_edits.insert(normalized_target);
+                Ok(())
+            }
+            PermissionDecision::AllowAllTurn => {
+                state.turn_allow_all_edits = true;
+                Ok(())
+            }
+            PermissionDecision::AllowAlways => {
+                state.allowed_edit_patterns.insert(normalized_target);
+                drop(state);
+                self.persist()
+            }
+            PermissionDecision::DenyWithFeedback => {
+                let guidance = prompt_result.feedback.unwrap_or_default();
+                let guidance = guidance.trim();
+                if guidance.is_empty() {
+                    state.session_denied_edits.insert(normalized_target.clone());
+                    Err(anyhow!("Edit denied: {normalized_target}"))
+                } else {
+                    Err(anyhow!(
+                        "Edit denied: {normalized_target}\nUser guidance: {guidance}"
+                    ))
+                }
+            }
+            PermissionDecision::DenyAlways => {
+                state.denied_edit_patterns.insert(normalized_target.clone());
+                drop(state);
+                self.persist()?;
+                Err(anyhow!("Edit denied: {normalized_target}"))
+            }
+            PermissionDecision::DenyOnce => {
+                state.session_denied_edits.insert(normalized_target.clone());
+                Err(anyhow!("Edit denied: {normalized_target}"))
+            }
+        }
     }
 
     pub fn persist(&self) -> Result<()> {
@@ -321,13 +587,17 @@ impl PermissionManager {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow!("Permission state lock poisoned"))?;
         let store = PermissionStore {
-            allowed_directory_prefixes: self.allowed_directory_prefixes.iter().cloned().collect(),
-            denied_directory_prefixes: self.denied_directory_prefixes.iter().cloned().collect(),
-            allowed_command_patterns: self.allowed_command_patterns.iter().cloned().collect(),
-            denied_command_patterns: self.denied_command_patterns.iter().cloned().collect(),
-            allowed_edit_patterns: self.allowed_edit_patterns.iter().cloned().collect(),
-            denied_edit_patterns: self.denied_edit_patterns.iter().cloned().collect(),
+            allowed_directory_prefixes: state.allowed_directory_prefixes.iter().cloned().collect(),
+            denied_directory_prefixes: state.denied_directory_prefixes.iter().cloned().collect(),
+            allowed_command_patterns: state.allowed_command_patterns.iter().cloned().collect(),
+            denied_command_patterns: state.denied_command_patterns.iter().cloned().collect(),
+            allowed_edit_patterns: state.allowed_edit_patterns.iter().cloned().collect(),
+            denied_edit_patterns: state.denied_edit_patterns.iter().cloned().collect(),
         };
         fs::write(path, format!("{}\n", serde_json::to_string_pretty(&store)?))?;
         Ok(())
@@ -347,6 +617,15 @@ impl PermissionManager {
         io::stdin().read_line(&mut input)?;
         Ok(matches!(input.trim(), "y" | "Y" | "yes" | "YES"))
     }
+}
+
+fn is_within_directory(root: &Path, target: &Path) -> bool {
+    let Ok(relative) = target.strip_prefix(root) else {
+        return false;
+    };
+    !relative
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
 fn read_store() -> Result<PermissionStore> {

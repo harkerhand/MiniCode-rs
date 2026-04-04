@@ -1,10 +1,12 @@
 mod agent_loop;
 mod anthropic_adapter;
+mod background_tasks;
 mod cli_commands;
 mod config;
 mod file_review;
 mod history;
 mod install;
+mod local_tool_shortcuts;
 mod manage_cli;
 mod mcp;
 mod mock_model;
@@ -28,6 +30,7 @@ use anthropic_adapter::AnthropicModelAdapter;
 use cli_commands::{find_matching_slash_commands, try_handle_local_command};
 use config::load_runtime_config;
 use history::{load_history_entries, save_history_entries};
+use local_tool_shortcuts::parse_local_tool_shortcut;
 use manage_cli::maybe_handle_management_command;
 use mock_model::MockModelAdapter;
 use permissions::PermissionManager;
@@ -155,12 +158,11 @@ async fn run_repl_loop(
             || input.starts_with("/patch")
             || input.starts_with("/cmd")
         {
-            let (tool_name, payload) = parse_shortcut_command(&input);
-            if let Some(tool_name) = tool_name {
+            if let Some(shortcut) = parse_local_tool_shortcut(&input) {
                 let result = tools
                     .execute(
-                        tool_name,
-                        payload,
+                        shortcut.tool_name,
+                        shortcut.input,
                         &ToolContext {
                             cwd: cwd.to_string_lossy().to_string(),
                             permissions: Some(Arc::new(permissions.clone())),
@@ -248,113 +250,6 @@ async fn run_repl_loop(
     let _ = save_history_entries(&history);
 
     Ok(())
-}
-
-fn parse_shortcut_command(input: &str) -> (Option<&'static str>, serde_json::Value) {
-    if input == "/ls" {
-        return (
-            Some("list_files"),
-            serde_json::json!({
-                "path": ".",
-            }),
-        );
-    }
-    if let Some(path) = input.strip_prefix("/ls ") {
-        return (
-            Some("list_files"),
-            serde_json::json!({ "path": path.trim() }),
-        );
-    }
-
-    if let Some(rest) = input.strip_prefix("/grep ") {
-        let parts = rest.split("::").collect::<Vec<_>>();
-        if parts.len() == 2 {
-            return (
-                Some("grep_files"),
-                serde_json::json!({ "pattern": parts[0].trim(), "path": parts[1].trim() }),
-            );
-        }
-        return (
-            Some("grep_files"),
-            serde_json::json!({ "pattern": rest.trim() }),
-        );
-    }
-
-    if let Some(path) = input.strip_prefix("/read ") {
-        return (
-            Some("read_file"),
-            serde_json::json!({ "path": path.trim() }),
-        );
-    }
-
-    if let Some(rest) = input.strip_prefix("/write ") {
-        let parts = rest.splitn(2, "::").collect::<Vec<_>>();
-        if parts.len() == 2 {
-            return (
-                Some("write_file"),
-                serde_json::json!({ "path": parts[0].trim(), "content": parts[1] }),
-            );
-        }
-    }
-
-    if let Some(rest) = input.strip_prefix("/modify ") {
-        let parts = rest.splitn(2, "::").collect::<Vec<_>>();
-        if parts.len() == 2 {
-            return (
-                Some("modify_file"),
-                serde_json::json!({ "path": parts[0].trim(), "content": parts[1] }),
-            );
-        }
-    }
-
-    if let Some(rest) = input.strip_prefix("/edit ") {
-        let parts = rest.splitn(3, "::").collect::<Vec<_>>();
-        if parts.len() == 3 {
-            return (
-                Some("edit_file"),
-                serde_json::json!({
-                    "path": parts[0].trim(),
-                    "search": parts[1],
-                    "replace": parts[2]
-                }),
-            );
-        }
-    }
-
-    if let Some(rest) = input.strip_prefix("/patch ") {
-        let parts = rest.split("::").collect::<Vec<_>>();
-        if parts.len() >= 3 && parts.len() % 2 == 1 {
-            let path = parts[0].trim();
-            let mut replacements = vec![];
-            let mut i = 1;
-            while i + 1 < parts.len() {
-                replacements.push(serde_json::json!({
-                    "search": parts[i],
-                    "replace": parts[i + 1],
-                }));
-                i += 2;
-            }
-            return (
-                Some("patch_file"),
-                serde_json::json!({ "path": path, "replacements": replacements }),
-            );
-        }
-    }
-
-    if let Some(rest) = input.strip_prefix("/cmd ") {
-        if let Some((cwd, cmd)) = rest.split_once("::") {
-            return (
-                Some("run_command"),
-                serde_json::json!({ "cwd": cwd.trim(), "command": cmd.trim() }),
-            );
-        }
-        return (
-            Some("run_command"),
-            serde_json::json!({ "command": rest.trim() }),
-        );
-    }
-
-    (None, serde_json::Value::Null)
 }
 
 #[tokio::main]
