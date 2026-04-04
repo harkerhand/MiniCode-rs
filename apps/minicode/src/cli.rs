@@ -11,10 +11,10 @@ use crate::launch_tui_app;
 #[command(
     name = "minicode",
     version,
-    about = "A Claude-powered code assistant",
-    long_about = r#"MiniCode: Claude 驱动的代码助手
+    about = "A code assistant",
+    long_about = r#"MiniCode 驱动的代码助手
 
-交互式编程环境，让 Claude 帮助您完成代码任务。
+交互式编程环境，让 MiniCode 帮助您完成代码任务。
 
 使用示例：
   minicode                    # 启动交互式 TUI 环境
@@ -52,7 +52,7 @@ pub(crate) enum Command {
         long_about = "交互式安装向导，帮助您配置 MiniCode 的初始设置
 
 包括：
-  - 验证 Claude API 密钥
+  - 验证 API 密钥
   - 配置模型选择
   - 初始化权限系统
   - 发现和配置 MCP 服务"
@@ -64,7 +64,7 @@ pub(crate) enum Command {
         about = "Manage MCP servers",
         long_about = "配置和管理 MCP（模型上下文协议）服务器
 
-MCP 允许 Claude 访问外部工具、资源和数据。
+MCP 允许 MiniCode 访问外部工具、资源和数据。
 使用 mcp 命令可以列出、添加和移除服务器。
 
 配置作用域：
@@ -85,9 +85,9 @@ MCP 允许 Claude 访问外部工具、资源和数据。
     /// 管理技能
     #[command(
         about = "Manage skills",
-        long_about = "发现、安装和管理 Claude 技能
+        long_about = "发现、安装和管理 MiniCode 技能
 
-技能是 Claude 可用的特定功能或知识包。
+技能是 MiniCode 可用的特定功能或知识包。
 
 配置作用域：
   --project  使用项目级配置
@@ -302,7 +302,7 @@ pub(crate) enum SkillsCommand {
     /// 列出可用的技能
     #[command(
         about = "List available skills",
-        long_about = "发现并显示所有可用的 Claude 技能
+        long_about = "发现并显示所有可用的 MiniCode 技能
 
 技能被自动发现于以下位置：
   - ~/.minicode/skills/       (用户级技能)
@@ -395,14 +395,14 @@ pub async fn handle_management_command(cwd: impl AsRef<Path>, cmd: Command) -> R
 
 /// 打印详细的帮助信息
 fn print_help() {
-    let help = r#"MiniCode - 基于 Claude 的代码助手
+    let help = r#"MiniCode 代码助手
 
 用法：minicode [命令] [选项]
 
 命令：
   install       运行安装向导配置 MiniCode
   mcp           管理 MCP (模型上下文协议) 服务器
-  skills        发现和管理 Claude 技能
+  skills        发现和管理 MiniCode 技能
   history       管理会话历史记录
   help          显示此帮助信息
 
