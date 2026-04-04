@@ -32,7 +32,7 @@ fn mcp_log(message: impl AsRef<str>) {
     if !MCP_LOG_ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    eprintln!("\x1b[36m[mcp]\x1b[0m {}", message.as_ref());
+    eprintln!("\x1b[32m[mcp]\x1b[0m {}", message.as_ref());
 }
 
 pub struct McpBundle {
