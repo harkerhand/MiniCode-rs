@@ -12,8 +12,8 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use minicode_core::config::load_runtime_config;
-use minicode_core::prompt::McpServerSummary;
-use minicode_core::types::ModelAdapter;
+use minicode_core::prompt::{McpServerSummary, build_system_prompt};
+use minicode_core::types::{ChatMessage, ModelAdapter};
 
 /// MiniCode 命令行工具
 #[derive(Debug, Parser)]
@@ -43,6 +43,10 @@ use minicode_core::types::ModelAdapter;
     propagate_version = true
 )]
 struct Cli {
+    /// 恢复之前的会话
+    #[arg(long, help = "Resume a previous session")]
+    resume: bool,
+
     /// 执行的子命令
     #[command(subcommand)]
     command: Option<Command>,
@@ -459,6 +463,71 @@ fn log_mcp_bootstrap(servers: &[McpServerSummary]) {
     }
 }
 
+/// 交互式会话选择
+async fn select_session(cwd: &std::path::Path) -> Result<Option<String>, anyhow::Error> {
+    let sessions = minicode_history::load_sessions(cwd)?;
+
+    if sessions.sessions.is_empty() {
+        eprintln!("没有找到之前的会话。");
+        return Ok(None);
+    }
+
+    // 显示最近的 10 个会话
+    eprintln!("\n📋 之前的会话:");
+    eprintln!(
+        "{:<3} {:<26} {:<6} {:<30}",
+        "编号", "创建时间", "回合数", "模型"
+    );
+    eprintln!("{}", "-".repeat(80));
+
+    for (idx, entry) in sessions.sessions.iter().take(10).enumerate() {
+        let created = entry.created_at.chars().take(19).collect::<String>();
+        let model = entry.model.as_deref().unwrap_or("未知");
+        let model_short = if model.len() > 25 {
+            format!("{}...", &model[..22])
+        } else {
+            model.to_string()
+        };
+
+        eprintln!(
+            "{:<3} {:<26} {:<6} {:<30}",
+            idx + 1,
+            created,
+            entry.turn_count,
+            model_short
+        );
+    }
+
+    // 获取用户输入
+    eprint!(
+        "\n选择会话 (1-{}，或按 Enter 取消): ",
+        sessions.sessions.len().min(10)
+    );
+    use std::io::{self, BufRead};
+
+    let stdin = io::stdin();
+    let mut line = String::new();
+    stdin.lock().read_line(&mut line)?;
+
+    let line = line.trim();
+    if line.is_empty() {
+        eprintln!("已取消。创建新会话。\n");
+        return Ok(None);
+    }
+
+    match line.parse::<usize>() {
+        Ok(choice) if choice > 0 && choice <= sessions.sessions.len().min(10) => {
+            let session_id = &sessions.sessions[choice - 1].session_id;
+            eprintln!("恢复会话: {}\n", session_id);
+            Ok(Some(session_id.clone()))
+        }
+        _ => {
+            eprintln!("无效的选择。创建新会话。\n");
+            Ok(None)
+        }
+    }
+}
+
 #[tokio::main]
 /// 程序入口点，处理所有错误并以适当的退出码结束
 async fn main() {
@@ -500,6 +569,143 @@ async fn run() -> Result<()> {
     log_mcp_bootstrap(&mcp_servers);
     set_mcp_startup_logging_enabled(false);
 
+    // 处理会话选择或创建
+    let (session_id, initial_messages, initial_transcript) = if cli.resume {
+        match select_session(&cwd).await? {
+            Some(resume_id) => {
+                // 尝试加载会话数据
+                match minicode_history::load_session(&cwd, &resume_id) {
+                    Ok(session) => {
+                        eprintln!("✨ 正在加载会话数据...\n");
+
+                        // 恢复消息列表 - 从 serde_json::Value 反序列化回 ChatMessage
+                        let recovered_messages: Vec<ChatMessage> = session
+                            .messages
+                            .iter()
+                            .filter_map(|v| serde_json::from_value::<ChatMessage>(v.clone()).ok())
+                            .collect();
+
+                        // 生成可视化的成绩单条目
+                        let mut transcript = Vec::new();
+
+                        // 将所有消息转换为可视化条目
+                        for msg in &recovered_messages {
+                            match msg {
+                                ChatMessage::System { .. } => {}
+                                ChatMessage::User { content } => {
+                                    transcript.push(TranscriptEntry {
+                                        kind: "user".to_string(),
+                                        body: content.clone(),
+                                    });
+                                }
+                                ChatMessage::Assistant { content } => {
+                                    transcript.push(TranscriptEntry {
+                                        kind: "assistant".to_string(),
+                                        body: content.clone(),
+                                    });
+                                }
+                                ChatMessage::AssistantProgress { content } => {
+                                    transcript.push(TranscriptEntry {
+                                        kind: "progress".to_string(),
+                                        body: content.clone(),
+                                    });
+                                }
+                                ChatMessage::AssistantToolCall {
+                                    tool_use_id,
+                                    tool_name,
+                                    input,
+                                } => {
+                                    transcript.push(TranscriptEntry {
+                                        kind: "tool_call".to_string(),
+                                        body: format!(
+                                            "🔧 工具调用: {} (ID: {})\n输入: {}",
+                                            tool_name, tool_use_id, input
+                                        ),
+                                    });
+                                }
+                                ChatMessage::ToolResult {
+                                    tool_use_id,
+                                    tool_name,
+                                    content,
+                                    is_error,
+                                } => {
+                                    let prefix = if *is_error {
+                                        "❌ 工具错误"
+                                    } else {
+                                        "✅ 工具结果"
+                                    };
+                                    transcript.push(TranscriptEntry {
+                                        kind: if *is_error {
+                                            "tool_error"
+                                        } else {
+                                            "tool_result"
+                                        }
+                                        .to_string(),
+                                        body: format!(
+                                            "{}: {} (ID: {})\n结果: {}",
+                                            prefix, tool_name, tool_use_id, content
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+
+                        transcript.push(TranscriptEntry {
+                            kind: "system".to_string(),
+                            body: "─".repeat(60).to_string()
+                                + "\n✨ 历史记录加载完毕，现在可以继续对话",
+                        });
+
+                        (resume_id, recovered_messages, transcript)
+                    }
+                    Err(e) => {
+                        eprintln!("⚠️  无法加载会话: {}", e);
+                        eprintln!("🆕 创建新会话...\n");
+
+                        let new_id = minicode_history::generate_session_id();
+                        let system_msg = ChatMessage::System {
+                            content: {
+                                let skills = tools.get_skills();
+                                let mcp_servers = tools.get_mcp_servers();
+                                build_system_prompt(
+                                    &cwd,
+                                    &permissions.get_summary(),
+                                    &skills,
+                                    &mcp_servers,
+                                )
+                            },
+                        };
+                        (new_id, vec![system_msg], vec![])
+                    }
+                }
+            }
+            None => {
+                let new_id = minicode_history::generate_session_id();
+                let system_msg = ChatMessage::System {
+                    content: {
+                        let skills = tools.get_skills();
+                        let mcp_servers = tools.get_mcp_servers();
+                        build_system_prompt(&cwd, &permissions.get_summary(), &skills, &mcp_servers)
+                    },
+                };
+                (new_id, vec![system_msg], vec![])
+            }
+        }
+    } else {
+        // 创建新会话
+        let new_id = minicode_history::generate_session_id();
+        let system_msg = ChatMessage::System {
+            content: {
+                let skills = tools.get_skills();
+                let mcp_servers = tools.get_mcp_servers();
+                build_system_prompt(&cwd, &permissions.get_summary(), &skills, &mcp_servers)
+            },
+        };
+        (new_id, vec![system_msg], vec![])
+    };
+
+    let session_start_time = std::time::SystemTime::now();
+
     // 运行 TUI 应用
     run_tui_app(TuiAppArgs {
         runtime: runtime.clone(),
@@ -507,6 +713,10 @@ async fn run() -> Result<()> {
         model,
         cwd: cwd.clone(),
         permissions,
+        session_id,
+        session_start_time,
+        initial_messages,
+        initial_transcript,
     })
     .await?;
 

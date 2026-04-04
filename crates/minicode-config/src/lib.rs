@@ -75,6 +75,41 @@ pub fn project_mcp_path(cwd: &Path) -> PathBuf {
     cwd.join(".mcp.json")
 }
 
+/// 返回项目级会话目录: .mini-code/sessions/
+pub fn project_sessions_dir(cwd: &Path) -> PathBuf {
+    cwd.join(".mini-code/sessions")
+}
+
+/// 返回特定会话目录: .mini-code/sessions/{session_id}/
+pub fn project_session_dir(cwd: &Path, session_id: &str) -> PathBuf {
+    project_sessions_dir(cwd).join(session_id)
+}
+
+/// 返回会话索引路径: .mini-code/sessions/index.json
+pub fn project_sessions_index(cwd: &Path) -> PathBuf {
+    project_sessions_dir(cwd).join("index.json")
+}
+
+/// 返回会话元数据路径: .mini-code/sessions/{session_id}/metadata.json
+pub fn project_session_metadata_path(cwd: &Path, session_id: &str) -> PathBuf {
+    project_session_dir(cwd, session_id).join("metadata.json")
+}
+
+/// 返回会话对话历史路径: .mini-code/sessions/{session_id}/conversation.json
+pub fn project_session_conversation_path(cwd: &Path, session_id: &str) -> PathBuf {
+    project_session_dir(cwd, session_id).join("conversation.json")
+}
+
+/// 返回会话权限文件路径: .mini-code/sessions/{session_id}/permissions.json
+pub fn project_session_permissions_path(cwd: &Path, session_id: &str) -> PathBuf {
+    project_session_dir(cwd, session_id).join("permissions.json")
+}
+
+/// 返回当前会话文件路径: .mini-code/current_session.json
+pub fn project_current_session_path(cwd: &Path) -> PathBuf {
+    cwd.join(".mini-code/current_session.json")
+}
+
 /// 读取 JSON 文件，不存在时返回默认值。
 fn read_json_file<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> Result<T> {
     match fs::read_to_string(path) {

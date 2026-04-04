@@ -8,11 +8,13 @@ authors.workspace = true
 
 [dependencies]
 anyhow = "1"
+chrono = "0.4"
 crossterm = "0.29"
 minicode-agent-core = { path = "../minicode-agent-core" }
 minicode-background-tasks = { path = "../minicode-background-tasks" }
 minicode-cli-commands = { path = "../minicode-cli-commands" }
 minicode-core = { path = "../minicode-core" }
+minicode-history = { path = "../minicode-history" }
 minicode-permissions = { path = "../minicode-permissions" }
 minicode-shortcuts = { path = "../minicode-shortcuts" }
 minicode-tool = { path = "../minicode-tool" }

@@ -8,9 +8,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use minicode_core::history::{load_history_entries, save_history_entries};
-use minicode_core::prompt::build_system_prompt;
-use minicode_core::types::ChatMessage;
+use minicode_core::history::load_history_entries;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -25,8 +23,8 @@ use input::{
     remove_char_before, scroll_transcript_by, toggle_tool_details,
 };
 use render::render_screen;
-pub use state::TuiAppArgs;
-use state::{ScreenState, TranscriptEntry};
+use state::ScreenState;
+pub use state::{TranscriptEntry, TuiAppArgs};
 use turn::{handle_approval_key, handle_submit};
 
 struct TerminalGuard;
@@ -62,25 +60,20 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
+    // 使用预先准备好的数据（在 run() 函数中已经加载并处理过）
+    let mut messages = args.initial_messages.clone();
+    let initial_transcript = args.initial_transcript.clone();
+
     let mut state = ScreenState {
         history: load_history_entries(),
-        message_count: 1,
+        message_count: messages.len(),
+        session_id: args.session_id.clone(),
+        session_start_time: args.session_start_time,
+        turn_count: 0,
+        transcript: initial_transcript,
         ..ScreenState::default()
     };
     state.history_index = state.history.len();
-
-    let mut messages = vec![ChatMessage::System {
-        content: {
-            let skills = args.tools.get_skills();
-            let mcp_servers = args.tools.get_mcp_servers();
-            build_system_prompt(
-                &args.cwd,
-                &args.permissions.get_summary(),
-                &skills,
-                &mcp_servers,
-            )
-        },
-    }];
 
     let mut should_exit = false;
     while !should_exit {
@@ -337,6 +330,36 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
         }
     }
 
-    let _ = save_history_entries(&state.history);
+    // Save complete session
+    let duration_seconds = args
+        .session_start_time
+        .elapsed()
+        .unwrap_or_default()
+        .as_secs();
+
+    let metadata = minicode_history::SessionMetadata {
+        session_id: args.session_id.clone(),
+        created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        ended_at: Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+        duration_seconds,
+        model: args.runtime.as_ref().map(|r| r.model.clone()),
+        cwd: args.cwd.to_string_lossy().to_string(),
+        turn_count: state.turn_count,
+        user_input_count: state.message_count,
+        tool_call_count: 0,
+        status: "completed".to_string(),
+    };
+
+    let session = minicode_history::SessionRecord {
+        session_id: args.session_id.clone(),
+        metadata,
+        messages: messages
+            .iter()
+            .map(|m| serde_json::to_value(m).unwrap_or_default())
+            .collect(),
+        turns: vec![],
+    };
+
+    let _ = minicode_history::save_session(&args.cwd, &session);
     Ok(())
 }
