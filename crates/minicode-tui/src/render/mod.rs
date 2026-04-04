@@ -35,7 +35,7 @@ pub(crate) fn render_screen(
 
     terminal.draw(|frame| {
         let area = frame.area();
-        let input_height = if command_rows > 0 { 11 } else { 5 };
+        let input_height = if command_rows > 0 { 10 } else { 4 };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -143,10 +143,6 @@ pub(crate) fn render_screen(
                 ),
                 Span::raw(display_input),
             ]),
-            Line::from(Span::styled(
-                "Enter submit | Click [展开]/[收起] | PgUp/PgDn scroll | Ctrl+C exit",
-                Style::default().fg(Color::DarkGray),
-            )),
         ];
         let prompt = Paragraph::new(prompt_text)
             .block(
