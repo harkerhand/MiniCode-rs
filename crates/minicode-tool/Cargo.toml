@@ -9,7 +9,7 @@ authors.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 futures = { workspace = true }
-jsonschema = "0.45.0"
+jsonschema = { workspace = true }
 minicode-permissions = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

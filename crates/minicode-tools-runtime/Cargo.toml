@@ -19,7 +19,7 @@ minicode-tool = { workspace = true }
 minicode-workspace = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-shell-words = "1"
+shell-words = { workspace = true }
 tokio = { workspace = true, features = ["process", "rt", "time"] }
 
 [lints]

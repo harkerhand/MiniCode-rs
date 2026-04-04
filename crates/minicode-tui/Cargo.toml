@@ -8,8 +8,8 @@ authors.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-chrono = "0.4"
-crossterm = "0.29"
+chrono = { workspace = true }
+crossterm = { workspace = true }
 minicode-agent-core = { workspace = true }
 minicode-background-tasks = { workspace = true }
 minicode-cli-commands = { workspace = true }
@@ -20,10 +20,10 @@ minicode-tool = { workspace = true }
 minicode-config = { workspace = true }
 minicode-types = { workspace = true }
 minicode-prompt = { workspace = true }
-ratatui = "0.30.0"
+ratatui = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
-unicode-width = "0.2.2"
+unicode-width = { workspace = true }
 
 [lints]
 workspace = true
