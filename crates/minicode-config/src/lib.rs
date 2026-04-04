@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,32 @@ pub struct RuntimeConfig {
     pub max_output_tokens: Option<u32>,
     pub mcp_servers: HashMap<String, McpServerConfig>,
     pub source_summary: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveSessionContext {
+    pub cwd: PathBuf,
+    pub session_id: String,
+}
+
+fn active_session_cell() -> &'static Mutex<Option<ActiveSessionContext>> {
+    static CELL: OnceLock<Mutex<Option<ActiveSessionContext>>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(None))
+}
+
+/// 设置当前进程内的活动会话上下文。
+pub fn set_active_session_context(cwd: PathBuf, session_id: String) {
+    if let Ok(mut slot) = active_session_cell().lock() {
+        *slot = Some(ActiveSessionContext { cwd, session_id });
+    }
+}
+
+/// 获取当前进程内的活动会话上下文。
+pub fn get_active_session_context() -> Option<ActiveSessionContext> {
+    active_session_cell()
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone())
 }
 
 /// 返回 mini-code 配置目录 `~/.mini-code`。

@@ -1,6 +1,6 @@
 use ratatui::text::{Line, Span};
 
-use crate::state::{ScreenState, TuiAppArgs};
+use crate::state::{ScreenState, TuiAppArgs, session_permissions};
 use crate::theme::theme;
 
 pub(super) fn build_header_lines(args: &TuiAppArgs, state: &ScreenState) -> Vec<Line<'static>> {
@@ -86,7 +86,7 @@ pub(super) fn build_header_lines(args: &TuiAppArgs, state: &ScreenState) -> Vec<
         Line::from(vec![
             Span::styled("permissions", theme.header_label_permissions_style()),
             Span::raw(" "),
-            Span::raw(args.permissions.get_summary().join(" | ")),
+            Span::raw(session_permissions().get_summary().join(" | ")),
             if recent.is_empty() {
                 Span::raw("")
             } else {

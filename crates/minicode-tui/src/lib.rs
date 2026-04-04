@@ -8,6 +8,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use minicode_core::history::load_history_entries;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -23,7 +24,10 @@ use input::{
 };
 use render::render_screen;
 use state::ScreenState;
-pub use state::{TranscriptEntry, TuiAppArgs};
+pub use state::{
+    TranscriptEntry, TuiAppArgs, init_initial_messages, init_initial_transcript, init_session_id,
+    init_session_permissions, init_session_start_time,
+};
 use turn::{handle_approval_key, handle_submit};
 
 struct TerminalGuard;
@@ -60,14 +64,14 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // 使用预先准备好的数据（在 run() 函数中已经加载并处理过）
-    let mut messages = args.initial_messages.clone();
-    let initial_transcript = args.initial_transcript.clone();
+    let mut messages = state::initial_messages().clone();
+    let initial_transcript = state::initial_transcript().clone();
 
     let mut state = ScreenState {
-        history: args.initial_history.clone(),
+        history: load_history_entries(),
         message_count: messages.len(),
-        session_id: args.session_id.clone(),
-        session_start_time: args.session_start_time,
+        session_id: state::session_id().clone(),
+        session_start_time: state::session_start_time(),
         turn_count: 0,
         transcript: initial_transcript,
         ..ScreenState::default()
@@ -330,14 +334,13 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     }
 
     // Save complete session
-    let duration_seconds = args
-        .session_start_time
+    let duration_seconds = state::session_start_time()
         .elapsed()
         .unwrap_or_default()
         .as_secs();
 
     let metadata = minicode_history::SessionMetadata {
-        session_id: args.session_id.clone(),
+        session_id: state::session_id().clone(),
         created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         ended_at: Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
         duration_seconds,
@@ -350,7 +353,7 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     };
 
     let session = minicode_history::SessionRecord {
-        session_id: args.session_id.clone(),
+        session_id: state::session_id().clone(),
         metadata,
         messages: messages
             .iter()

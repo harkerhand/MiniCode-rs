@@ -6,7 +6,7 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use minicode_agent_core::run_agent_turn;
 use minicode_cli_commands::{find_matching_slash_commands, try_handle_local_command};
-use minicode_core::history::save_session_history_entries;
+use minicode_core::history::save_history_entries;
 use minicode_core::prompt::build_system_prompt;
 use minicode_core::types::ChatMessage;
 use minicode_permissions::{PermissionDecision, PermissionPromptHandler, PermissionPromptResult};
@@ -20,6 +20,7 @@ use crate::input::{scroll_transcript_by, toggle_tool_details};
 use crate::render::render_screen;
 use crate::state::{
     ChannelCallbacks, PendingApproval, ScreenState, TranscriptEntry, TuiAppArgs, TurnEvent,
+    session_permissions,
 };
 
 /// 向会话转录中写入一条错误消息并更新状态。
@@ -342,6 +343,7 @@ pub(crate) async fn handle_submit(
     messages: &mut Vec<ChatMessage>,
     raw_input: String,
 ) -> Result<bool> {
+    let permissions = session_permissions();
     let input = raw_input.trim().to_string();
     if input.is_empty() {
         return Ok(false);
@@ -352,7 +354,7 @@ pub(crate) async fn handle_submit(
 
     if state.history.last().map(|x| x.as_str()) != Some(input.as_str()) {
         state.history.push(input.clone());
-        let _ = save_session_history_entries(&args.cwd, &args.session_id, &state.history);
+        let _ = save_history_entries(&state.history);
     }
     state.history_index = state.history.len();
     state.history_draft.clear();
@@ -390,7 +392,7 @@ pub(crate) async fn handle_submit(
         state.is_busy = true;
         state.status = Some(format!("Running {}...", shortcut.tool_name));
         let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
-        let task_permissions = args.permissions.clone();
+        let task_permissions = permissions.clone();
         task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
         let tools = args.tools.clone();
         let cwd = args.cwd.to_string_lossy().to_string();
@@ -447,12 +449,7 @@ pub(crate) async fn handle_submit(
     let skills = args.tools.get_skills();
     let mcp_servers = args.tools.get_mcp_servers();
     messages[0] = ChatMessage::System {
-        content: build_system_prompt(
-            &args.cwd,
-            &args.permissions.get_summary(),
-            &skills,
-            &mcp_servers,
-        ),
+        content: build_system_prompt(&args.cwd, &permissions.get_summary(), &skills, &mcp_servers),
     };
     messages.push(ChatMessage::User {
         content: input.clone(),
@@ -462,12 +459,12 @@ pub(crate) async fn handle_submit(
         body: input,
     });
 
-    args.permissions.begin_turn();
+    permissions.begin_turn();
     state.status = Some("Thinking...".to_string());
     state.is_busy = true;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
-    let task_permissions = args.permissions.clone();
+    let task_permissions = permissions.clone();
     task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
     let tools = args.tools.clone();
     let model = args.model.clone();
@@ -509,7 +506,7 @@ pub(crate) async fn handle_submit(
     }
 
     *messages = done_messages.unwrap_or_default();
-    args.permissions.end_turn();
+    permissions.end_turn();
     state.is_busy = false;
     state.status = None;
     state.active_tool = None;

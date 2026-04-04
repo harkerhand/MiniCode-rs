@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use minicode_config::{
-    project_session_conversation_path, project_session_dir, project_session_metadata_path,
-    project_sessions_dir, project_sessions_index,
+    get_active_session_context, project_session_conversation_path, project_session_dir,
+    project_session_metadata_path, project_sessions_dir, project_sessions_index,
 };
 use minicode_types::{ChatMessage, TranscriptLine};
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ fn session_history_path(cwd: &Path, session_id: &str) -> std::path::PathBuf {
 }
 
 /// 加载某个会话的历史输入并限制最多保留最近 200 条。
-pub fn load_session_history_entries(cwd: &Path, session_id: &str) -> Vec<String> {
+fn load_session_history_entries(cwd: &Path, session_id: &str) -> Vec<String> {
     let path = session_history_path(cwd, session_id);
     let Ok(content) = fs::read_to_string(path) else {
         return vec![];
@@ -40,7 +40,7 @@ pub fn load_session_history_entries(cwd: &Path, session_id: &str) -> Vec<String>
 }
 
 /// 保存某个会话的历史输入并仅写入最近 200 条记录。
-pub fn save_session_history_entries(cwd: &Path, session_id: &str, entries: &[String]) -> Result<()> {
+fn save_session_history_entries(cwd: &Path, session_id: &str, entries: &[String]) -> Result<()> {
     let path = session_history_path(cwd, session_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -57,6 +57,22 @@ pub fn save_session_history_entries(cwd: &Path, session_id: &str, entries: &[Str
         format!("{}\n", serde_json::to_string_pretty(&payload)?),
     )?;
     Ok(())
+}
+
+/// 加载当前活动会话的历史输入。
+pub fn load_history_entries() -> Vec<String> {
+    let Some(ctx) = get_active_session_context() else {
+        return vec![];
+    };
+    load_session_history_entries(&ctx.cwd, &ctx.session_id)
+}
+
+/// 保存当前活动会话的历史输入。
+pub fn save_history_entries(entries: &[String]) -> Result<()> {
+    let Some(ctx) = get_active_session_context() else {
+        return Ok(());
+    };
+    save_session_history_entries(&ctx.cwd, &ctx.session_id, entries)
 }
 
 // ============================================================================

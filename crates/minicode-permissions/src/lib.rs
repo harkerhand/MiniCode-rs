@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
-use minicode_core::config::project_session_permissions_path;
+use minicode_core::config::{get_active_session_context, project_session_permissions_path};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -122,8 +122,10 @@ impl std::fmt::Debug for PermissionManager {
 
 impl PermissionManager {
     /// 从持久化存储加载权限配置并初始化管理器。
-    pub fn new(workspace_root: PathBuf, session_id: &str) -> Result<Self> {
-        let store_path = project_session_permissions_path(&workspace_root, session_id);
+    pub fn new(workspace_root: PathBuf) -> Result<Self> {
+        let ctx = get_active_session_context()
+            .ok_or_else(|| anyhow!("Active session context is not initialized"))?;
+        let store_path = project_session_permissions_path(&ctx.cwd, &ctx.session_id);
         let store = read_store(&store_path)?;
 
         let state = PermissionState {
@@ -182,7 +184,7 @@ impl PermissionManager {
     }
 
     /// 开始新回合并重置回合级编辑权限。
-    pub fn begin_turn(&mut self) {
+    pub fn begin_turn(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.turn_allowed_edits.clear();
             state.turn_allow_all_edits = false;
@@ -190,7 +192,7 @@ impl PermissionManager {
     }
 
     /// 结束回合并清理回合级状态。
-    pub fn end_turn(&mut self) {
+    pub fn end_turn(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.turn_allowed_edits.clear();
             state.turn_allow_all_edits = false;

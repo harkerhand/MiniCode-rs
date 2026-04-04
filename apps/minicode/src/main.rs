@@ -12,6 +12,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use minicode_core::config::load_runtime_config;
+use minicode_core::config::set_active_session_context;
 use minicode_core::prompt::{McpServerSummary, build_system_prompt};
 use minicode_core::types::{ChatMessage, ModelAdapter};
 
@@ -612,8 +613,8 @@ async fn run() -> Result<()> {
         // 创建新会话
         (minicode_history::generate_session_id(), None, vec![])
     };
-    let permissions = PermissionManager::new(cwd.clone(), &session_id)?;
-    let initial_history = minicode_history::load_session_history_entries(&cwd, &session_id);
+    set_active_session_context(cwd.clone(), session_id.clone());
+    let permissions = PermissionManager::new(cwd.clone())?;
     let initial_messages = if let Some(messages) = recovered_messages {
         messages
     } else {
@@ -626,18 +627,16 @@ async fn run() -> Result<()> {
 
     let session_start_time = std::time::SystemTime::now();
 
-    // 运行 TUI 应用
+    init_initial_messages(initial_messages)?;
+    init_initial_transcript(initial_transcript)?;
+    init_session_permissions(permissions.clone())?;
+    init_session_id(session_id.clone())?;
+    init_session_start_time(session_start_time)?;
     run_tui_app(TuiAppArgs {
         runtime: runtime.clone(),
         tools: tools.clone(),
         model,
         cwd: cwd.clone(),
-        permissions,
-        session_id,
-        session_start_time,
-        initial_messages,
-        initial_transcript,
-        initial_history,
     })
     .await?;
 
