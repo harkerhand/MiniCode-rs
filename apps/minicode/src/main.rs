@@ -179,7 +179,10 @@ enum McpCommand {
         protocol: Option<String>,
 
         /// 环境变量，格式为 KEY=VALUE（可重复）
-        #[arg(long = "env", help = "Environment variable in KEY=VALUE format (repeatable)")]
+        #[arg(
+            long = "env",
+            help = "Environment variable in KEY=VALUE format (repeatable)"
+        )]
         env_vars: Vec<String>,
 
         /// 使用项目级配置而非用户级
@@ -393,7 +396,11 @@ async fn handle_mcp_command(cwd: &std::path::Path, cmd: McpCommand) -> Result<bo
 async fn handle_skills_command(cwd: &std::path::Path, cmd: SkillsCommand) -> Result<bool> {
     match cmd {
         SkillsCommand::List => minicode_manage::list_skills(cwd).await,
-        SkillsCommand::Add { path, name, project } => {
+        SkillsCommand::Add {
+            path,
+            name,
+            project,
+        } => {
             let scope = if project { "project" } else { "user" };
             minicode_manage::add_skill(cwd, scope, path, name).await
         }
@@ -467,10 +474,10 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // 处理管理命令
-    if let Some(command) = cli.command {
-        if handle_management_command(&cwd, command).await? {
-            return Ok(());
-        }
+    if let Some(command) = cli.command
+        && handle_management_command(&cwd, command).await?
+    {
+        return Ok(());
     }
 
     // 初始化运行时环境

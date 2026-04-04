@@ -1,5 +1,6 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use crate::state::{ScreenState, TranscriptEntry};
 use crate::theme::theme;
@@ -53,8 +54,36 @@ pub(super) struct SessionRender {
     pub(super) toggle_targets: Vec<(usize, usize)>,
 }
 
+/// 按显示宽度将文本换行并附加统一前缀。
+fn wrapped_prefixed_lines(text: &str, prefix: &str, width: usize) -> Vec<Line<'static>> {
+    let safe_width = width.max(1);
+    let prefix_width = UnicodeWidthStr::width(prefix).min(safe_width.saturating_sub(1));
+    let content_width = safe_width.saturating_sub(prefix_width).max(1);
+
+    let mut out = Vec::new();
+    for raw in text.split('\n') {
+        let mut current = String::new();
+        let mut used = 0usize;
+        for ch in raw.chars() {
+            let w = UnicodeWidthStr::width(ch.to_string().as_str()).max(1);
+            if used + w > content_width {
+                out.push(Line::from(format!("{}{}", prefix, current)));
+                current.clear();
+                used = 0;
+            }
+            current.push(ch);
+            used += w;
+        }
+        out.push(Line::from(format!("{}{}", prefix, current)));
+    }
+    if out.is_empty() {
+        out.push(Line::from(prefix.to_string()));
+    }
+    out
+}
+
 /// 将会话转录渲染为可显示的行集合。
-pub(super) fn transcript_lines(state: &ScreenState) -> SessionRender {
+pub(super) fn transcript_lines(state: &ScreenState, width: usize) -> SessionRender {
     let theme = theme();
     let mut lines = Vec::new();
     let mut toggle_targets = Vec::new();
@@ -129,7 +158,7 @@ pub(super) fn transcript_lines(state: &ScreenState) -> SessionRender {
                     }
                     clipped
                 };
-                lines.push(Line::from(format!("  {}", display)));
+                lines.extend(wrapped_prefixed_lines(&display, "  ", width));
             }
             if !expanded && hidden == 0 && truncated {
                 lines.push(Line::from("  ..."));
@@ -137,7 +166,7 @@ pub(super) fn transcript_lines(state: &ScreenState) -> SessionRender {
         } else {
             lines.push(transcript_title_line(&entry.kind));
             for line in entry.body.lines() {
-                lines.push(Line::from(format!("  {}", sanitize_line(line))));
+                lines.extend(wrapped_prefixed_lines(&sanitize_line(line), "  ", width));
             }
         }
     }
@@ -148,6 +177,6 @@ pub(super) fn transcript_lines(state: &ScreenState) -> SessionRender {
 }
 
 /// 构建会话区域的最终渲染行。
-pub(super) fn session_lines(state: &ScreenState) -> SessionRender {
-    transcript_lines(state)
+pub(super) fn session_lines(state: &ScreenState, width: usize) -> SessionRender {
+    transcript_lines(state, width)
 }

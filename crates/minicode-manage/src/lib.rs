@@ -133,7 +133,10 @@ pub fn parse_env_pairs(entries: &[String]) -> Result<HashMap<String, serde_json:
 
     for entry in entries {
         let Some(eq_idx) = entry.find('=') else {
-            return Err(anyhow!("Invalid environment variable format: {} (expected KEY=VALUE)", entry));
+            return Err(anyhow!(
+                "Invalid environment variable format: {} (expected KEY=VALUE)",
+                entry
+            ));
         };
 
         let key = entry[..eq_idx].trim();

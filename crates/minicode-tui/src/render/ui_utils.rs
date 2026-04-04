@@ -1,8 +1,6 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use unicode_width::UnicodeWidthStr;
 
-use crate::input::display_width;
-
 pub(super) fn sanitize_line(text: &str) -> String {
     text.chars()
         .filter(|ch| !ch.is_control() || *ch == '\t')
@@ -10,48 +8,53 @@ pub(super) fn sanitize_line(text: &str) -> String {
         .replace('\t', "    ")
 }
 
-pub(super) fn input_viewport(
+pub(super) fn wrap_input_view(
     input: &str,
     cursor_offset: usize,
-    max_width: usize,
-) -> (String, usize) {
-    if max_width == 0 {
-        return (String::new(), 0);
-    }
-
+    text_width: usize,
+) -> (Vec<String>, usize, usize) {
+    let max_width = text_width.max(1);
     let chars = input.chars().collect::<Vec<_>>();
     let cursor = cursor_offset.min(chars.len());
 
-    let mut start = 0usize;
-    let mut used = 0usize;
-    let mut i = cursor;
-    while i > 0 {
-        let ch = chars[i - 1];
-        let w = UnicodeWidthStr::width(ch.to_string().as_str());
-        if used + w > max_width {
-            break;
+    let mut lines = vec![String::new()];
+    let mut row = 0usize;
+    let mut col = 0usize;
+    let mut cursor_row = 0usize;
+    let mut cursor_col = 0usize;
+
+    for (idx, ch) in chars.iter().enumerate() {
+        if idx == cursor {
+            cursor_row = row;
+            cursor_col = col;
         }
-        used += w;
-        i -= 1;
-        start = i;
+
+        if *ch == '\n' {
+            lines.push(String::new());
+            row += 1;
+            col = 0;
+            continue;
+        }
+
+        let w = UnicodeWidthStr::width(ch.to_string().as_str()).max(1);
+        if col + w > max_width {
+            lines.push(String::new());
+            row += 1;
+            col = 0;
+        }
+        lines[row].push(*ch);
+        col += w;
     }
 
-    let mut out = String::new();
-    let mut out_width = 0usize;
-    let mut end = start;
-    while end < chars.len() {
-        let w = UnicodeWidthStr::width(chars[end].to_string().as_str());
-        if out_width + w > max_width {
-            break;
-        }
-        out.push(chars[end]);
-        out_width += w;
-        end += 1;
+    if cursor == chars.len() {
+        cursor_row = row;
+        cursor_col = col;
     }
 
-    let cursor_text = chars[start..cursor].iter().collect::<String>();
-    let cursor_dx = display_width(&cursor_text);
-    (out, cursor_dx)
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    (lines, cursor_row, cursor_col)
 }
 
 pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {

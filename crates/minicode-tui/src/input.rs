@@ -58,7 +58,9 @@ pub(crate) fn get_visible_commands(input: &str) -> Vec<&'static SlashCommand> {
         return vec![];
     }
     if input == "/" {
-        return SLASH_COMMANDS.iter().collect();
+        let mut all = SLASH_COMMANDS.iter().collect::<Vec<_>>();
+        all.sort_by_key(|cmd| cmd.usage);
+        return all;
     }
     let matches = find_matching_slash_commands(input);
     SLASH_COMMANDS
