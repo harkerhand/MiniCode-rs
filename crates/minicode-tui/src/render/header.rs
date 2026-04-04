@@ -86,30 +86,43 @@ pub(super) fn build_header_lines(args: &TuiAppArgs, state: &ScreenState) -> Vec<
         ]),
         Line::from({
             let mut line = Vec::new();
-            line.push(Span::styled(
-                "permissions",
-                theme.header_label_permissions_style(),
-            ));
-            line.push(Span::raw(" "));
             let permissions_summary = session_permissions().get_summary();
             for item in permissions_summary {
                 match item {
                     PermissionSummaryItem::Cwd(cwd) => {
-                        line.push(Span::styled("cwd", theme.expandable_style()));
+                        line.push(Span::styled("cwd", theme.header_label_permissions_style()));
                         line.push(Span::raw(format!(" {}", cwd)));
                     }
                     PermissionSummaryItem::ExtraAllowDirs(items) => {
-                        line.push(Span::styled("extra allow dirs", theme.expandable_style()));
-                        line.push(Span::raw(format!(" {}", items.join(", "))));
+                        line.push(Span::styled(
+                            "extra allow dirs",
+                            theme.header_label_permissions_style(),
+                        ));
+                        line.push(Span::raw(format!(
+                            " {}",
+                            if items.is_empty() {
+                                String::from("none")
+                            } else {
+                                items.join(", ")
+                            }
+                        )));
                     }
                     PermissionSummaryItem::DangerousAllowDirs(items) => {
                         line.push(Span::styled(
                             "dangerous allowlist",
-                            theme.expandable_style(),
+                            theme.header_label_permissions_style(),
                         ));
-                        line.push(Span::raw(format!(" {}", items.join(", "))));
+                        line.push(Span::raw(format!(
+                            " {}",
+                            if items.is_empty() {
+                                String::from("none")
+                            } else {
+                                items.join(", ")
+                            }
+                        )));
                     }
                 }
+                line.push(Span::raw("   "));
             }
 
             if !recent.is_empty() {

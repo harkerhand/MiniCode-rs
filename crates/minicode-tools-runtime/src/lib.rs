@@ -15,6 +15,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
 
+const WEB_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MiniCode/0.1";
+
 /// 控制 MCP 启动阶段日志开关。
 pub fn set_mcp_startup_logging_enabled(enabled: bool) {
     set_mcp_logging_enabled(enabled);
@@ -654,6 +656,435 @@ impl Tool for RunCommandTool {
     }
 }
 
+#[derive(Default)]
+pub struct WebSearchTool;
+#[derive(Debug, Deserialize)]
+struct WebSearchInput {
+    query: String,
+    max_results: Option<usize>,
+    allowed_domains: Option<Vec<String>>,
+    blocked_domains: Option<Vec<String>>,
+}
+
+#[async_trait]
+impl Tool for WebSearchTool {
+    fn name(&self) -> &str {
+        "web_search"
+    }
+
+    fn description(&self) -> &str {
+        "Search the public web using DuckDuckGo Lite."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type":"object",
+            "properties":{
+                "query":{"type":"string","description":"Search query."},
+                "max_results":{"type":"number","description":"Maximum number of results to return. Defaults to 5."},
+                "allowed_domains":{"type":"array","items":{"type":"string"},"description":"Only return results from these domains."},
+                "blocked_domains":{"type":"array","items":{"type":"string"},"description":"Exclude results from these domains."}
+            },
+            "required":["query"]
+        })
+    }
+
+    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+        let parsed: WebSearchInput = match serde_json::from_value(input) {
+            Ok(v) => v,
+            Err(err) => return ToolResult::err(err.to_string()),
+        };
+        let query = parsed.query.trim();
+        if query.is_empty() {
+            return ToolResult::err("query is required");
+        }
+
+        match search_duckduckgo_lite(
+            query,
+            parsed.max_results.unwrap_or(5),
+            parsed.allowed_domains.unwrap_or_default(),
+            parsed.blocked_domains.unwrap_or_default(),
+        )
+        .await
+        {
+            Ok(items) => {
+                if items.is_empty() {
+                    return ToolResult::ok("No results found.");
+                }
+                let mut lines = vec![format!("QUERY: {query}"), String::new()];
+                for (idx, item) in items.iter().enumerate() {
+                    lines.push(format!("[{}] {}", idx + 1, item.title));
+                    lines.push(format!("    URL: {}", item.link));
+                    if !item.snippet.is_empty() {
+                        lines.push(format!("    {}", item.snippet));
+                    }
+                    lines.push(String::new());
+                }
+                ToolResult::ok(lines.join("\n").trim_end().to_string())
+            }
+            Err(err) => ToolResult::err(err.to_string()),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct WebFetchTool;
+#[derive(Debug, Deserialize)]
+struct WebFetchInput {
+    url: String,
+    max_chars: Option<usize>,
+}
+
+#[async_trait]
+impl Tool for WebFetchTool {
+    fn name(&self) -> &str {
+        "web_fetch"
+    }
+
+    fn description(&self) -> &str {
+        "Fetch a web page and extract readable text content."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type":"object",
+            "properties":{
+                "url":{"type":"string","description":"HTTP or HTTPS URL to fetch."},
+                "max_chars":{"type":"number","description":"Maximum number of characters to return. Defaults to 12000."}
+            },
+            "required":["url"]
+        })
+    }
+
+    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+        let parsed: WebFetchInput = match serde_json::from_value(input) {
+            Ok(v) => v,
+            Err(err) => return ToolResult::err(err.to_string()),
+        };
+        let max_chars = parsed.max_chars.unwrap_or(12_000).max(500);
+        if parsed.url.trim().is_empty() {
+            return ToolResult::err("url is required");
+        }
+
+        match fetch_web_page(&parsed.url, max_chars).await {
+            Ok(page) => {
+                if page.status >= 400 {
+                    return ToolResult::err(format!(
+                        "HTTP {} {}: {}",
+                        page.status, page.status_text, parsed.url
+                    ));
+                }
+                let mut lines = vec![
+                    format!("URL: {}", page.final_url),
+                    format!("STATUS: {}", page.status),
+                    format!("CONTENT_TYPE: {}", page.content_type),
+                ];
+                if let Some(title) = page.title
+                    && !title.is_empty()
+                {
+                    lines.push(format!("TITLE: {}", title));
+                }
+                lines.push(String::new());
+                lines.push(page.content);
+                ToolResult::ok(lines.join("\n"))
+            }
+            Err(err) => ToolResult::err(err.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WebSearchResult {
+    title: String,
+    link: String,
+    snippet: String,
+}
+
+#[derive(Debug, Clone)]
+struct FetchedPage {
+    final_url: String,
+    status: u16,
+    status_text: String,
+    content_type: String,
+    title: Option<String>,
+    content: String,
+}
+
+async fn search_duckduckgo_lite(
+    query: &str,
+    max_results: usize,
+    allowed_domains: Vec<String>,
+    blocked_domains: Vec<String>,
+) -> Result<Vec<WebSearchResult>> {
+    let client = reqwest::Client::builder()
+        .user_agent(WEB_USER_AGENT)
+        .build()?;
+
+    let mut url = reqwest::Url::parse("https://lite.duckduckgo.com/lite/")?;
+    url.query_pairs_mut().append_pair("q", query);
+
+    let response = client
+        .get(url)
+        .header(
+            reqwest::header::ACCEPT,
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        anyhow::bail!("Search request failed with status {}", response.status());
+    }
+
+    let html = response.text().await?;
+    let allowed = normalize_domain_list(&allowed_domains);
+    let blocked = normalize_domain_list(&blocked_domains);
+
+    let mut parsed = parse_duckduckgo_lite(&html);
+    parsed.retain(|r| passes_domain_filter(&r.link, &allowed, &blocked));
+    parsed.truncate(max_results.clamp(1, 20));
+    Ok(parsed)
+}
+
+async fn fetch_web_page(url: &str, max_chars: usize) -> Result<FetchedPage> {
+    let client = reqwest::Client::builder()
+        .user_agent(WEB_USER_AGENT)
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()?;
+    let response = client
+        .get(url)
+        .header(
+            reqwest::header::ACCEPT,
+            "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7",
+        )
+        .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+        .send()
+        .await?;
+
+    let status = response.status().as_u16();
+    let status_text = response
+        .status()
+        .canonical_reason()
+        .unwrap_or("Unknown")
+        .to_string();
+    let final_url = response.url().to_string();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let text = response.text().await?;
+
+    if content_type.to_ascii_lowercase().contains("html") {
+        Ok(FetchedPage {
+            final_url,
+            status,
+            status_text,
+            content_type,
+            title: extract_title(&text),
+            content: truncate_chars(&extract_readable_text(&text), max_chars),
+        })
+    } else {
+        Ok(FetchedPage {
+            final_url,
+            status,
+            status_text,
+            content_type,
+            title: None,
+            content: truncate_chars(&text, max_chars),
+        })
+    }
+}
+
+fn parse_duckduckgo_lite(html: &str) -> Vec<WebSearchResult> {
+    let mut results = vec![];
+    let marker = "<a rel=\"nofollow\" href=\"";
+    let mut cursor = 0usize;
+
+    while let Some(link_pos_rel) = html[cursor..].find(marker) {
+        let link_pos = cursor + link_pos_rel;
+        let href_start = link_pos + marker.len();
+        let Some(href_end_rel) = html[href_start..].find('"') else {
+            break;
+        };
+        let href_end = href_start + href_end_rel;
+        let raw_href = &html[href_start..href_end];
+
+        let title_start_marker = "class='result-link'>";
+        let Some(title_start_rel) = html[href_end..].find(title_start_marker) else {
+            cursor = href_end;
+            continue;
+        };
+        let title_start = href_end + title_start_rel + title_start_marker.len();
+        let Some(title_end_rel) = html[title_start..].find("</a>") else {
+            cursor = title_start;
+            continue;
+        };
+        let title_end = title_start + title_end_rel;
+
+        let next_anchor = html[title_end..]
+            .find(marker)
+            .map(|i| i + title_end)
+            .unwrap_or(html.len());
+        let block = &html[title_end..next_anchor];
+        let snippet = extract_between(block, "<td class='result-snippet'>", "</td>")
+            .map(|s| strip_tags(&s))
+            .unwrap_or_default();
+
+        let title = strip_tags(&decode_html(&html[title_start..title_end]));
+        let link = normalize_duckduckgo_link(raw_href);
+        if !title.is_empty() && !link.is_empty() {
+            results.push(WebSearchResult {
+                title,
+                link,
+                snippet: decode_html(&snippet),
+            });
+        }
+        cursor = title_end;
+    }
+
+    results
+}
+
+fn normalize_domain_list(domains: &[String]) -> Vec<String> {
+    domains
+        .iter()
+        .map(|d| d.trim().to_ascii_lowercase())
+        .filter(|d| !d.is_empty())
+        .collect()
+}
+
+fn passes_domain_filter(link: &str, allowed: &[String], blocked: &[String]) -> bool {
+    let Ok(url) = reqwest::Url::parse(link) else {
+        return false;
+    };
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    if blocked.iter().any(|d| matches_domain(&host, d)) {
+        return false;
+    }
+    if allowed.is_empty() {
+        return true;
+    }
+    allowed.iter().any(|d| matches_domain(&host, d))
+}
+
+fn matches_domain(host: &str, domain: &str) -> bool {
+    host == domain || host.ends_with(&format!(".{domain}"))
+}
+
+fn normalize_duckduckgo_link(raw_href: &str) -> String {
+    let href = decode_html(raw_href).trim().to_string();
+    if href.is_empty() {
+        return String::new();
+    }
+    let absolute = if href.starts_with("//") {
+        format!("https:{href}")
+    } else {
+        href
+    };
+    if let Ok(url) = reqwest::Url::parse(&absolute)
+        && let Some(redirect) = url.query_pairs().find_map(|(k, v)| {
+            if k == "uddg" {
+                Some(v.into_owned())
+            } else {
+                None
+            }
+        })
+    {
+        return redirect;
+    }
+    absolute
+}
+
+fn extract_title(html: &str) -> Option<String> {
+    extract_between(html, "<title", "</title>").map(|raw| {
+        let title_text = raw
+            .split_once('>')
+            .map(|(_, right)| right)
+            .unwrap_or(raw.as_str());
+        strip_tags(&decode_html(title_text))
+    })
+}
+
+fn extract_readable_text(html: &str) -> String {
+    let mut text = html.to_string();
+    for (start, end) in [
+        ("<script", "</script>"),
+        ("<style", "</style>"),
+        ("<noscript", "</noscript>"),
+        ("<svg", "</svg>"),
+    ] {
+        text = remove_block_like(&text, start, end);
+    }
+    text = strip_tags(&text);
+    decode_html(&text)
+}
+
+fn remove_block_like(text: &str, start_tag: &str, end_tag: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let Some(start_pos) = rest.to_ascii_lowercase().find(&start_tag.to_ascii_lowercase()) else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start_pos]);
+        let after_start = &rest[start_pos..];
+        let Some(end_pos_rel) = after_start
+            .to_ascii_lowercase()
+            .find(&end_tag.to_ascii_lowercase())
+        else {
+            break;
+        };
+        let end_pos = start_pos + end_pos_rel + end_tag.len();
+        rest = &rest[end_pos..];
+        out.push(' ');
+    }
+    out
+}
+
+fn strip_tags(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    for ch in input.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn decode_html(value: &str) -> String {
+    value
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&#x2F;", "/")
+        .replace("&#47;", "/")
+        .replace("&nbsp;", " ")
+}
+
+fn extract_between(text: &str, start: &str, end: &str) -> Option<String> {
+    let start_idx = text.find(start)?;
+    let right = &text[start_idx + start.len()..];
+    let end_idx = right.find(end)?;
+    Some(right[..end_idx].to_string())
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect::<String>()
+}
+
 /// 创建默认工具注册表，并按配置注入 MCP 工具。
 pub async fn create_default_tool_registry(
     cwd: &std::path::Path,
@@ -676,6 +1107,8 @@ pub async fn create_default_tool_registry(
         Arc::new(EditFileTool),
         Arc::new(PatchFileTool),
         Arc::new(RunCommandTool),
+        Arc::new(WebSearchTool),
+        Arc::new(WebFetchTool),
         Arc::new(LoadSkillTool::new(cwd.to_path_buf())),
     ];
     let mut mcp_server_summaries = vec![];

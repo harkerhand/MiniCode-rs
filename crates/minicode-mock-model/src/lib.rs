@@ -71,7 +71,7 @@ impl ModelAdapter for MockModelAdapter {
         // 列出可用工具
         if user_text == "/tools" {
             return Ok(AgentStep::Assistant {
-                content: "可用工具：ask_user, list_files, grep_files, read_file, write_file, modify_file, patch_file, edit_file, run_command, load_skill".to_string(),
+                content: "可用工具：ask_user, list_files, grep_files, read_file, write_file, modify_file, patch_file, edit_file, run_command, load_skill, web_fetch, web_search".to_string(),
                 kind: Some("final".to_string()),
                 diagnostics: None,
             });
