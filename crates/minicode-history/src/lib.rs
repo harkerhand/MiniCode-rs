@@ -291,40 +291,28 @@ pub fn render_recovered_messages(messages: &[ChatMessage]) -> Vec<TranscriptLine
                 });
             }
             ChatMessage::AssistantToolCall {
-                tool_use_id,
                 tool_name,
                 input,
+                ..
             } => {
                 transcript.push(TranscriptLine {
-                    kind: "tool_call".to_string(),
-                    body: format!(
-                        "🔧 工具调用: {} (ID: {})\n输入: {}",
-                        tool_name, tool_use_id, input
-                    ),
+                    kind: "tool".to_string(),
+                    body: format!("{}\n{}", tool_name, input),
                 });
             }
             ChatMessage::ToolResult {
-                tool_use_id,
-                tool_name,
                 content,
                 is_error,
+                ..
             } => {
-                let prefix = if *is_error {
-                    "❌ 工具错误"
-                } else {
-                    "✅ 工具结果"
-                };
                 transcript.push(TranscriptLine {
                     kind: if *is_error {
-                        "tool_error"
+                        "tool:error"
                     } else {
-                        "tool_result"
+                        "tool"
                     }
                     .to_string(),
-                    body: format!(
-                        "{}: {} (ID: {})\n结果: {}",
-                        prefix, tool_name, tool_use_id, content
-                    ),
+                    body: content.clone(),
                 });
             }
         }

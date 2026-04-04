@@ -140,9 +140,6 @@ pub(super) fn transcript_lines(state: &ScreenState, width: usize) -> SessionRend
                     if expanded { "[收起]" } else { "[展开]" },
                     theme.expandable_style(),
                 ));
-                if !expanded {
-                    title_spans.push(Span::raw(format!("  ({} more lines)", hidden)));
-                }
                 toggle_targets.push((title_line_idx, idx));
             }
             lines.push(Line::from(title_spans));
