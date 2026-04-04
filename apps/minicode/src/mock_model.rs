@@ -216,6 +216,62 @@ impl ModelAdapter for MockModelAdapter {
             }
         }
 
+        // 补丁编辑（多个替换）
+        if user_text.starts_with("/patch ") {
+            let payload = user_text.strip_prefix("/patch ").unwrap_or("");
+            let parts: Vec<&str> = payload.split("||").collect();
+            if parts.is_empty() {
+                return Ok(AgentStep::Assistant {
+                    content: "用法: /patch 路径::查找1::替换1||查找2::替换2||...".to_string(),
+                    kind: Some("final".to_string()),
+                    diagnostics: None,
+                });
+            }
+
+            let path_parts: Vec<&str> = parts[0].split("::").collect();
+            if path_parts.len() < 3 {
+                return Ok(AgentStep::Assistant {
+                    content: "用法: /patch 路径::查找1::替换1||查找2::替换2||...".to_string(),
+                    kind: Some("final".to_string()),
+                    diagnostics: None,
+                });
+            }
+
+            let target_path = path_parts[0].trim().to_string();
+            let mut replacements = vec![];
+
+            // 第一个替换
+            replacements.push(serde_json::json!({
+                "search": path_parts[1].to_string(),
+                "replace": path_parts[2].to_string()
+            }));
+
+            // 后续替换
+            for replacement_part in &parts[1..] {
+                let rep_parts: Vec<&str> = replacement_part.split("::").collect();
+                if rep_parts.len() >= 2 {
+                    replacements.push(serde_json::json!({
+                        "search": rep_parts[0].to_string(),
+                        "replace": rep_parts.get(1).map(|s| s.to_string()).unwrap_or_default()
+                    }));
+                }
+            }
+
+            return Ok(AgentStep::ToolCalls {
+                calls: vec![crate::types::ToolCall {
+                    id: Uuid::new_v4().to_string(),
+                    tool_name: "patch_file".to_string(),
+                    input: serde_json::json!({
+                        "path": target_path,
+                        "replacements": replacements
+                    }),
+                }],
+                content: None,
+                content_kind: None,
+                diagnostics: None,
+            });
+        }
+
         // 阶段 3: 默认提示
         Ok(AgentStep::Assistant {
             content: [
@@ -228,6 +284,7 @@ impl ModelAdapter for MockModelAdapter {
                 "/cmd pwd",
                 "/write notes.txt::hello",
                 "/edit notes.txt::hello::hello world",
+                "/patch file.txt::old1::new1||old2::new2",
             ]
             .join("\n"),
             kind: Some("final".to_string()),
@@ -390,6 +447,30 @@ mod tests {
                 assert!(content.contains("/tools"));
             }
             _ => panic!("Expected Assistant response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mock_model_patch_command() {
+        let mock = MockModelAdapter;
+        let messages = vec![ChatMessage::User {
+            content: "/patch file.txt::old1::new1||old2::new2".to_string(),
+        }];
+        let result = mock.next(&messages).await.unwrap();
+        match result {
+            AgentStep::ToolCalls { calls, .. } => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].tool_name, "patch_file");
+                assert_eq!(calls[0].input.get("path").unwrap().as_str(), Some("file.txt"));
+
+                let replacements = calls[0].input.get("replacements").unwrap().as_array().unwrap();
+                assert_eq!(replacements.len(), 2);
+                assert_eq!(replacements[0].get("search").unwrap().as_str(), Some("old1"));
+                assert_eq!(replacements[0].get("replace").unwrap().as_str(), Some("new1"));
+                assert_eq!(replacements[1].get("search").unwrap().as_str(), Some("old2"));
+                assert_eq!(replacements[1].get("replace").unwrap().as_str(), Some("new2"));
+            }
+            _ => panic!("Expected ToolCalls"),
         }
     }
 }
