@@ -81,10 +81,24 @@ pub async fn run_agent_turn(
         match next {
             AgentStep::Assistant {
                 content,
-                kind: _,
+                kind,
                 diagnostics,
             } => {
                 let is_empty = is_empty_assistant_response(&content);
+
+                if !is_empty && kind.as_deref() == Some("progress") {
+                    if let Some(cb) = callbacks.as_deref_mut() {
+                        cb.on_progress_message(&content);
+                    }
+                    messages.push(ChatMessage::AssistantProgress {
+                        content: content.clone(),
+                    });
+                    push_continue(
+                        &mut messages,
+                        "继续，紧接着上一条进度消息执行。请给出下一步具体工具调用、代码修改，或在任务确实完成时给出最终答案。",
+                    );
+                    continue;
+                }
 
                 if is_empty {
                     let stop_reason = diagnostics.as_ref().and_then(|d| d.stop_reason.as_deref());
@@ -108,16 +122,21 @@ pub async fn run_agent_turn(
                             cb.on_progress_message(&progress);
                         }
                         messages.push(ChatMessage::AssistantProgress { content: progress });
-                        push_continue(&mut messages, "继续，从你刚才中断的位置直接执行下一步。");
+                        push_continue(
+                            &mut messages,
+                            "继续，从你刚才中断的位置直接执行下一步，给出具体工具调用或代码修改。",
+                        );
                         continue;
                     }
 
                     if empty_retry < 2 {
                         empty_retry += 1;
-                        push_continue(
-                            &mut messages,
-                            "上一条回复为空，请继续并给出下一步具体执行。",
-                        );
+                        let retry_prompt = if saw_tool_result {
+                            "上一条回复为空，且你刚收到工具结果。请立即继续下一步，先根据工具报错修正参数或改用可行方案，再执行。"
+                        } else {
+                            "上一条回复为空。请立即继续，给出下一步具体工具调用或代码修改。"
+                        };
+                        push_continue(&mut messages, retry_prompt);
                         continue;
                     }
 
@@ -160,6 +179,8 @@ pub async fn run_agent_turn(
                 content_kind,
                 ..
             } => {
+                let content_only_final =
+                    content.is_some() && content_kind.as_deref() != Some("progress");
                 if let Some(c) = content {
                     if content_kind.as_deref() == Some("progress") {
                         if let Some(cb) = callbacks.as_deref_mut() {
@@ -176,6 +197,9 @@ pub async fn run_agent_turn(
                 }
 
                 if calls.is_empty() {
+                    if content_only_final {
+                        return messages;
+                    }
                     continue;
                 }
 

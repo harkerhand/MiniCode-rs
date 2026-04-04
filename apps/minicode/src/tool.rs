@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use jsonschema::{Draft, JSONSchema};
 use serde_json::Value;
 
 use crate::permissions::PermissionManager;
@@ -78,9 +79,41 @@ pub struct McpServerSummary {
     pub prompt_count: Option<usize>,
 }
 
+enum InputValidator {
+    Compiled(JSONSchema),
+    CompileError(String),
+}
+
+fn compile_validator(schema: &Value) -> InputValidator {
+    match JSONSchema::options()
+        .with_draft(Draft::Draft7)
+        .compile(schema)
+    {
+        Ok(validator) => InputValidator::Compiled(validator),
+        Err(err) => InputValidator::CompileError(format!("Invalid tool schema: {err}")),
+    }
+}
+
+fn validate_tool_input(validator: &InputValidator, input: &Value) -> Result<(), String> {
+    match validator {
+        InputValidator::Compiled(validator) => {
+            if let Err(errors) = validator.validate(input) {
+                let details = errors.take(3).map(|e| e.to_string()).collect::<Vec<_>>();
+                if details.is_empty() {
+                    return Err("Invalid input".to_string());
+                }
+                return Err(format!("Invalid input: {}", details.join("; ")));
+            }
+            Ok(())
+        }
+        InputValidator::CompileError(err) => Err(err.clone()),
+    }
+}
+
 pub struct ToolRegistry {
     tools: Vec<Arc<dyn Tool>>,
     index: HashMap<String, usize>,
+    validators: Vec<InputValidator>,
     skills: Vec<SkillSummary>,
     mcp_servers: Vec<McpServerSummary>,
     disposer: Option<Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
@@ -94,12 +127,15 @@ impl ToolRegistry {
         disposer: Option<Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
     ) -> Self {
         let mut index = HashMap::new();
+        let mut validators = Vec::with_capacity(tools.len());
         for (idx, tool) in tools.iter().enumerate() {
             index.insert(tool.name().to_string(), idx);
+            validators.push(compile_validator(&tool.input_schema()));
         }
         Self {
             tools,
             index,
+            validators,
             skills,
             mcp_servers,
             disposer,
@@ -128,7 +164,13 @@ impl ToolRegistry {
             return ToolResult::err(format!("Unknown tool: {tool_name}"));
         };
 
-        self.tools[*idx].run(input, context).await
+        let tool = &self.tools[*idx];
+        let validator = &self.validators[*idx];
+        if let Err(err) = validate_tool_input(validator, &input) {
+            return ToolResult::err(err);
+        }
+
+        tool.run(input, context).await
     }
 
     pub async fn dispose(&self) {

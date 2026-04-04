@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -84,7 +85,9 @@ impl AnthropicModelAdapter {
         if let Some(ms) = retry_after_ms {
             return ms;
         }
-        let base = (BASE_RETRY_DELAY_MS * (2u64.saturating_pow((attempt.saturating_sub(1)) as u32))).min(MAX_RETRY_DELAY_MS);
+        let base = (BASE_RETRY_DELAY_MS
+            * (2u64.saturating_pow((attempt.saturating_sub(1)) as u32)))
+        .min(MAX_RETRY_DELAY_MS);
         let mut rng = rand::rng();
         let jitter: f64 = rng.random_range(0.0..0.25);
         (base as f64 * (1.0 + jitter)) as u64
@@ -94,6 +97,12 @@ impl AnthropicModelAdapter {
         let raw = headers.get("retry-after")?.to_str().ok()?;
         if let Ok(sec) = raw.parse::<u64>() {
             return Some(sec * 1000);
+        }
+        if let Ok(at) = httpdate::parse_http_date(raw) {
+            return Some(match at.duration_since(SystemTime::now()) {
+                Ok(delta) => delta.as_millis().min(u64::MAX as u128) as u64,
+                Err(_) => 0,
+            });
         }
         None
     }
@@ -119,20 +128,36 @@ impl AnthropicModelAdapter {
             match msg {
                 ChatMessage::System { content } => system.push(content.clone()),
                 ChatMessage::User { content } => {
-                    push(&mut converted, "user", json!({"type":"text","text":content}));
+                    push(
+                        &mut converted,
+                        "user",
+                        json!({"type":"text","text":content}),
+                    );
                 }
                 ChatMessage::Assistant { content } => {
-                    push(&mut converted, "assistant", json!({"type":"text","text":content}));
+                    push(
+                        &mut converted,
+                        "assistant",
+                        json!({"type":"text","text":content}),
+                    );
                 }
                 ChatMessage::AssistantProgress { content } => {
-                    push(&mut converted, "assistant", json!({"type":"text","text":format!("<progress>\n{}\n</progress>", content)}));
+                    push(
+                        &mut converted,
+                        "assistant",
+                        json!({"type":"text","text":format!("<progress>\n{}\n</progress>", content)}),
+                    );
                 }
                 ChatMessage::AssistantToolCall {
                     tool_use_id,
                     tool_name,
                     input,
                 } => {
-                    push(&mut converted, "assistant", json!({"type":"tool_use","id":tool_use_id,"name":tool_name,"input":input}));
+                    push(
+                        &mut converted,
+                        "assistant",
+                        json!({"type":"tool_use","id":tool_use_id,"name":tool_name,"input":input}),
+                    );
                 }
                 ChatMessage::ToolResult {
                     tool_use_id,
@@ -140,7 +165,11 @@ impl AnthropicModelAdapter {
                     is_error,
                     ..
                 } => {
-                    push(&mut converted, "user", json!({"type":"tool_result","tool_use_id":tool_use_id,"content":content,"is_error":is_error}));
+                    push(
+                        &mut converted,
+                        "user",
+                        json!({"type":"tool_result","tool_use_id":tool_use_id,"content":content,"is_error":is_error}),
+                    );
                 }
             }
         }
@@ -174,7 +203,10 @@ impl ModelAdapter for AnthropicModelAdapter {
 
         let url = format!("{}/v1/messages", runtime.base_url.trim_end_matches('/'));
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("anthropic-version", reqwest::header::HeaderValue::from_static("2023-06-01"));
+        headers.insert(
+            "anthropic-version",
+            reqwest::header::HeaderValue::from_static("2023-06-01"),
+        );
 
         if let Some(token) = runtime.auth_token {
             headers.insert(
@@ -182,7 +214,10 @@ impl ModelAdapter for AnthropicModelAdapter {
                 reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?,
             );
         } else if let Some(api_key) = runtime.api_key {
-            headers.insert("x-api-key", reqwest::header::HeaderValue::from_str(&api_key)?);
+            headers.insert(
+                "x-api-key",
+                reqwest::header::HeaderValue::from_str(&api_key)?,
+            );
         }
 
         let body = json!({
@@ -212,7 +247,11 @@ impl ModelAdapter for AnthropicModelAdapter {
                 let text = resp.text().await.unwrap_or_default();
                 last_err = text.clone();
                 if Self::should_retry(last_status) && attempt < retry_limit {
-                    tokio::time::sleep(Duration::from_millis(Self::retry_delay_ms(attempt + 1, retry_after))).await;
+                    tokio::time::sleep(Duration::from_millis(Self::retry_delay_ms(
+                        attempt + 1,
+                        retry_after,
+                    )))
+                    .await;
                     continue;
                 }
                 return Err(anyhow!("Model request failed: {} {}", last_status, text));
@@ -225,18 +264,34 @@ impl ModelAdapter for AnthropicModelAdapter {
             let mut ignored_block_types = vec![];
 
             for block in data.content.unwrap_or_default() {
-                let t = block.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let t = block
+                    .get("type")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 block_types.push(t.clone());
                 if t == "text" {
                     if let Some(txt) = block.get("text").and_then(|x| x.as_str()) {
                         text_parts.push(txt.to_string());
                     }
                 } else if t == "tool_use" {
-                    let id = block.get("id").and_then(|x| x.as_str()).unwrap_or_default().to_string();
-                    let name = block.get("name").and_then(|x| x.as_str()).unwrap_or_default().to_string();
+                    let id = block
+                        .get("id")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let name = block
+                        .get("name")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or_default()
+                        .to_string();
                     let input = block.get("input").cloned().unwrap_or(Value::Null);
                     if !id.is_empty() && !name.is_empty() {
-                        tool_calls.push(ToolCall { id, tool_name: name, input });
+                        tool_calls.push(ToolCall {
+                            id,
+                            tool_name: name,
+                            input,
+                        });
                     }
                 } else {
                     ignored_block_types.push(t);
@@ -253,7 +308,11 @@ impl ModelAdapter for AnthropicModelAdapter {
             if !tool_calls.is_empty() {
                 return Ok(AgentStep::ToolCalls {
                     calls: tool_calls,
-                    content: if content.is_empty() { None } else { Some(content) },
+                    content: if content.is_empty() {
+                        None
+                    } else {
+                        Some(content)
+                    },
                     content_kind: kind,
                     diagnostics,
                 });
@@ -266,6 +325,10 @@ impl ModelAdapter for AnthropicModelAdapter {
             });
         }
 
-        Err(anyhow!("Model request failed after retries: status={} err={}", last_status, last_err))
+        Err(anyhow!(
+            "Model request failed after retries: status={} err={}",
+            last_status,
+            last_err
+        ))
     }
 }
