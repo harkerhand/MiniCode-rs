@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-use crate::McpClient;
+use crate::client::McpClient;
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct McpToolDescriptor {
