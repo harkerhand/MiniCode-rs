@@ -20,9 +20,11 @@ use tokio::sync::Mutex;
 mod content_length_transport;
 mod mcp_tools;
 mod newline_json_transport;
+mod streamable_http_transport;
 
 use content_length_transport::start_content_length_service;
 use newline_json_transport::start_newline_json_service;
+use streamable_http_transport::start_streamable_http_service;
 
 const MCP_STARTUP_TIMEOUT: Duration = Duration::from_secs(45);
 const MCP_LIST_TIMEOUT: Duration = Duration::from_secs(3);
@@ -58,46 +60,87 @@ impl McpClient {
         cwd: &std::path::Path,
     ) -> anyhow::Result<Self> {
         let command = config.command.trim();
-        if command.is_empty() {
-            return Err(anyhow::anyhow!(
-                "MCP server {} has empty command",
-                server_name
-            ));
-        }
-
-        let mut cmd = tokio::process::Command::new(&config.command);
-        cmd.args(config.args.clone().unwrap_or_default())
-            .current_dir(if let Some(custom) = &config.cwd {
-                cwd.join(custom)
-            } else {
-                cwd.to_path_buf()
-            });
-
-        if let Some(envs) = &config.env {
-            for (k, v) in envs {
-                cmd.env(k, v.to_string().trim_matches('"'));
+        let url = config
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|x| !x.is_empty());
+        let protocol_hint = config.protocol.as_deref();
+        let selected_protocol = match protocol_hint {
+            Some("auto") | None => {
+                if url.is_some() {
+                    "streamable-http"
+                } else {
+                    "newline-json"
+                }
             }
-        }
+            Some(value) => value,
+        };
 
-        mcp_log(format!(
-            "server={} rmcp spawn command={} args={:?}",
-            server_name,
-            config.command,
-            config.args.clone().unwrap_or_default()
-        ));
+        let (service, protocol) = match selected_protocol {
+            "streamable-http" => {
+                let endpoint = url.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "MCP server {} uses streamable-http protocol but `url` is empty",
+                        server_name
+                    )
+                })?;
+                let headers = extract_string_map(config.headers.as_ref())?;
+                mcp_log(format!(
+                    "server={} rmcp connect remote url={} headers={}",
+                    server_name,
+                    endpoint,
+                    headers.len()
+                ));
+                let service =
+                    start_streamable_http_service(endpoint, &headers, server_name).await?;
+                (service, "streamable-http(rmcp)")
+            }
+            "content-length" | "newline-json" => {
+                if command.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "MCP server {} has empty command for protocol {}",
+                        server_name,
+                        selected_protocol
+                    ));
+                }
 
-        let (service, protocol) = match config.protocol.as_deref() {
-            Some("content-length") => (
-                start_content_length_service(cmd, server_name, &config.command).await?,
-                "content-length(rmcp-compat)",
-            ),
-            Some("newline-json") | None => (
-                start_newline_json_service(cmd, server_name, &config.command).await?,
-                "newline-json(rmcp)",
-            ),
-            Some(other) => {
+                let mut cmd = tokio::process::Command::new(&config.command);
+                cmd.args(config.args.clone().unwrap_or_default())
+                    .current_dir(if let Some(custom) = &config.cwd {
+                        cwd.join(custom)
+                    } else {
+                        cwd.to_path_buf()
+                    });
+
+                if let Some(envs) = &config.env {
+                    for (k, v) in envs {
+                        cmd.env(k, v.to_string().trim_matches('"'));
+                    }
+                }
+
+                mcp_log(format!(
+                    "server={} rmcp spawn command={} args={:?}",
+                    server_name,
+                    config.command,
+                    config.args.clone().unwrap_or_default()
+                ));
+
+                if selected_protocol == "content-length" {
+                    (
+                        start_content_length_service(cmd, server_name, &config.command).await?,
+                        "content-length(rmcp-compat)",
+                    )
+                } else {
+                    (
+                        start_newline_json_service(cmd, server_name, &config.command).await?,
+                        "newline-json(rmcp)",
+                    )
+                }
+            }
+            other => {
                 return Err(anyhow::anyhow!(
-                    "MCP server {} uses unsupported protocol `{}`; expected `newline-json` or `content-length`",
+                    "MCP server {} uses unsupported protocol `{}`; expected `auto`, `newline-json`, `content-length`, or `streamable-http`",
                     server_name,
                     other
                 ));
@@ -201,6 +244,37 @@ impl McpClient {
     }
 }
 
+fn extract_string_map(
+    values: Option<&HashMap<String, serde_json::Value>>,
+) -> anyhow::Result<HashMap<String, String>> {
+    let mut result = HashMap::new();
+    let Some(values) = values else {
+        return Ok(result);
+    };
+
+    for (key, value) in values {
+        let parsed = value
+            .as_str()
+            .map(|x| x.to_string())
+            .unwrap_or_else(|| value.to_string().trim_matches('"').to_string());
+        result.insert(key.clone(), parsed);
+    }
+    Ok(result)
+}
+
+fn summarize_server_endpoint(config: &McpServerConfig) -> String {
+    if let Some(url) = config
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+    {
+        url.to_string()
+    } else {
+        config.command.clone()
+    }
+}
+
 pub async fn create_mcp_backed_tools(
     cwd: &std::path::Path,
     mcp_servers: &HashMap<String, McpServerConfig>,
@@ -238,7 +312,7 @@ pub async fn create_mcp_backed_tools(
         if config.enabled == Some(false) {
             servers.push(McpServerSummary {
                 name: server_name.clone(),
-                command: config.command.clone(),
+                command: summarize_server_endpoint(config),
                 status: "disabled".to_string(),
                 tool_count: 0,
                 error: None,
@@ -336,7 +410,7 @@ pub async fn create_mcp_backed_tools(
 
                 servers.push(McpServerSummary {
                     name: server_name,
-                    command: config.command,
+                    command: summarize_server_endpoint(&config),
                     status: "connected".to_string(),
                     tool_count: tool_descriptors.len(),
                     error: None,
@@ -356,7 +430,7 @@ pub async fn create_mcp_backed_tools(
                 ));
                 servers.push(McpServerSummary {
                     name: server_name,
-                    command: config.command,
+                    command: summarize_server_endpoint(&config),
                     status: "error".to_string(),
                     tool_count: 0,
                     error: Some(error),

@@ -111,7 +111,7 @@ pub fn install_skill(
     cwd: impl AsRef<Path>,
     source_path: &str,
     name: Option<String>,
-    scope: &str,
+    project: bool,
 ) -> Result<(String, String)> {
     let source = cwd.as_ref().join(source_path);
     let (content, inferred_name) = if source.is_dir() {
@@ -142,7 +142,7 @@ pub fn install_skill(
         return Err(anyhow!("Skill name cannot be empty."));
     }
 
-    let root = if scope == "project" {
+    let root = if project {
         cwd.as_ref().join(".mini-code/skills")
     } else {
         dirs::home_dir()
@@ -162,9 +162,9 @@ pub fn install_skill(
 pub fn remove_managed_skill(
     cwd: impl AsRef<Path>,
     name: &str,
-    scope: &str,
+    project: bool,
 ) -> Result<(bool, String)> {
-    let root = if scope == "project" {
+    let root = if project {
         cwd.as_ref().join(".mini-code/skills")
     } else {
         dirs::home_dir()

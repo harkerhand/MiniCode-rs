@@ -9,12 +9,62 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpServerConfig {
+    #[serde(default)]
     pub command: String,
     pub args: Option<Vec<String>>,
     pub env: Option<HashMap<String, serde_json::Value>>,
+    pub url: Option<String>,
+    pub headers: Option<HashMap<String, serde_json::Value>>,
     pub cwd: Option<String>,
     pub enabled: Option<bool>,
     pub protocol: Option<String>,
+}
+
+impl McpServerConfig {
+    pub fn new(
+        protocol: Option<String>,
+        env_vars: HashMap<String, serde_json::Value>,
+        url: Option<String>,
+        headers: HashMap<String, serde_json::Value>,
+        command: Vec<String>,
+    ) -> Result<Self> {
+        if url.is_some() && !command.is_empty() {
+            return Err(anyhow!(
+                "Cannot set both remote URL and local command. Choose one."
+            ));
+        }
+        if url.is_none() && command.is_empty() {
+            return Err(anyhow!("Missing MCP command or --url"));
+        }
+        Ok(Self {
+            command: if command.is_empty() {
+                String::new()
+            } else {
+                command[0].clone()
+            },
+            args: if command.len() > 1 {
+                Some(command[1..].to_vec())
+            } else if command.is_empty() {
+                None
+            } else {
+                Some(vec![])
+            },
+            env: if env_vars.is_empty() {
+                None
+            } else {
+                Some(env_vars)
+            },
+            url,
+            headers: if headers.is_empty() {
+                None
+            } else {
+                Some(headers)
+            },
+            cwd: None,
+            enabled: None,
+            protocol,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -271,10 +321,10 @@ pub fn load_runtime_config(cwd: impl AsRef<Path>) -> Result<RuntimeConfig> {
 
 /// 读取指定作用域（user/project）的 MCP 服务器配置。
 pub fn load_scoped_mcp_servers(
-    scope: &str,
+    project: bool,
     cwd: impl AsRef<Path>,
 ) -> Result<HashMap<String, McpServerConfig>> {
-    let path = if scope == "project" {
+    let path = if project {
         project_mcp_path(cwd)
     } else {
         mini_code_mcp_path()
@@ -284,11 +334,11 @@ pub fn load_scoped_mcp_servers(
 
 /// 保存指定作用域（user/project）的 MCP 服务器配置。
 pub fn save_scoped_mcp_servers(
-    scope: &str,
+    project: bool,
     cwd: impl AsRef<Path>,
     servers: HashMap<String, McpServerConfig>,
 ) -> Result<()> {
-    let path = if scope == "project" {
+    let path = if project {
         project_mcp_path(cwd)
     } else {
         mini_code_mcp_path()

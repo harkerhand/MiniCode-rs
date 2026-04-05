@@ -75,6 +75,7 @@ MCP 允许 MiniCode 访问外部工具、资源和数据。
   minicode mcp list
   minicode mcp add my-server -- node server.js
   minicode mcp add my-server --protocol content-length -- node server.js
+  minicode mcp add remote-server --protocol streamable-http --url https://example.com/mcp
   minicode mcp add my-server --env API_KEY=xxx --env DEBUG=1 -- node server.js"
     )]
     Mcp {
@@ -161,7 +162,9 @@ pub(crate) enum McpCommand {
   -- <COMMAND> 启动服务器的命令（在 -- 后指定）
 
 可选标志：
-  --protocol   通信协议（auto/content-length/newline-json）
+  --protocol   通信协议（auto/content-length/newline-json/streamable-http）
+  --url        远程 MCP 的 HTTP 地址（与 COMMAND 二选一）
+  --header     远程请求头（KEY=VALUE，可重复指定）
   --env        环境变量（KEY=VALUE，可重复指定）
   --project    保存到项目配置而非用户配置
 
@@ -171,6 +174,9 @@ pub(crate) enum McpCommand {
 
   # 指定协议
   minicode mcp add my-server --protocol content-length -- python server.py
+
+  # 远程 MCP（streamable HTTP）
+  minicode mcp add remote-server --protocol streamable-http --url https://example.com/mcp
 
   # 添加环境变量
   minicode mcp add my-server --env API_KEY=xxx --env DEBUG=1 -- node server.js
@@ -186,10 +192,14 @@ pub(crate) enum McpCommand {
         /// 通信协议
         #[arg(
             long,
-            value_parser = ["auto", "content-length", "newline-json"],
+            value_parser = ["auto", "content-length", "newline-json", "streamable-http"],
             help = "Communication protocol (default: auto-detect)"
         )]
         protocol: Option<String>,
+
+        /// 远程 MCP 地址（streamable-http）
+        #[arg(long, help = "Remote MCP endpoint URL")]
+        url: Option<String>,
 
         /// 环境变量，格式为 KEY=VALUE（可重复）
         #[arg(
@@ -198,6 +208,13 @@ pub(crate) enum McpCommand {
         )]
         env_vars: Vec<String>,
 
+        /// 远程请求头，格式为 KEY=VALUE（可重复）
+        #[arg(
+            long = "header",
+            help = "Remote HTTP header in KEY=VALUE format (repeatable)"
+        )]
+        headers: Vec<String>,
+
         /// 使用项目级配置而非用户级
         #[arg(long, help = "Save to project configuration")]
         project: bool,
@@ -205,9 +222,9 @@ pub(crate) enum McpCommand {
         /// MCP 命令及参数
         #[arg(
             trailing_var_arg = true,
-            required = true,
+            required = false,
             allow_hyphen_values = true,
-            help = "Command and arguments to start the server (after --)"
+            help = "Command and arguments to start a local server (after --)"
         )]
         command: Vec<String>,
     },
@@ -425,6 +442,7 @@ fn print_help() {
   # MCP 管理
   minicode mcp list
   minicode mcp add my-server -- node server.js
+  minicode mcp add remote-server --protocol streamable-http --url https://example.com/mcp
   minicode mcp remove my-server
 
   # 技能管理
@@ -451,24 +469,28 @@ fn print_help() {
 /// 处理 MCP 相关命令
 async fn handle_mcp_command(cwd: impl AsRef<Path>, cmd: McpCommand) -> Result<bool> {
     match cmd {
-        McpCommand::List { project } => {
-            let scope = if project { "project" } else { "user" };
-            list_mcp_servers(cwd.as_ref(), scope).await
-        }
+        McpCommand::List { project } => list_mcp_servers(cwd.as_ref(), project).await,
         McpCommand::Add {
             name,
             protocol,
+            url,
             env_vars,
+            headers,
             project,
             command,
         } => {
-            let scope = if project { "project" } else { "user" };
             let env = parse_env_pairs(&env_vars)?;
-            add_mcp_server(cwd.as_ref(), scope, name, protocol, env, command).await
+            let header_map = parse_env_pairs(&headers)?;
+            add_mcp_server(
+                cwd.as_ref(),
+                project,
+                name,
+                McpServerConfig::new(protocol, env, url, header_map, command)?,
+            )
+            .await
         }
         McpCommand::Remove { name, project } => {
-            let scope = if project { "project" } else { "user" };
-            remove_mcp_server(cwd.as_ref(), scope, name).await
+            remove_mcp_server(cwd.as_ref(), project, name).await
         }
     }
 }
@@ -481,14 +503,8 @@ async fn handle_skills_command(cwd: impl AsRef<Path>, cmd: SkillsCommand) -> Res
             path,
             name,
             project,
-        } => {
-            let scope = if project { "project" } else { "user" };
-            add_skill(cwd.as_ref(), scope, path, name).await
-        }
-        SkillsCommand::Remove { name, project } => {
-            let scope = if project { "project" } else { "user" };
-            remove_skill(cwd.as_ref(), scope, name).await
-        }
+        } => add_skill(cwd.as_ref(), project, path, name).await,
+        SkillsCommand::Remove { name, project } => remove_skill(cwd.as_ref(), project, name).await,
     }
 }
 
