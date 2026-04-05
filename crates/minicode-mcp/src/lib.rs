@@ -10,8 +10,8 @@ use mcp_tools::{
     append_resource_prompt_tools, format_tool_result,
 };
 use minicode_config::McpServerConfig;
-use minicode_prompt::{McpServerSummary, SkillSummary};
 use minicode_tool::{Tool, ToolRegistry, ToolResult};
+use minicode_types::{McpServerSummary, SkillSummary};
 use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
 use rmcp::service::RunningService;
 use serde_json::Value;

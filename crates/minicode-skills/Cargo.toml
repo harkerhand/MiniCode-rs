@@ -9,7 +9,7 @@ authors.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 dirs = { workspace = true }
-minicode-prompt = { workspace = true }
+minicode-types = { workspace = true }
 
 [lints]
 workspace = true

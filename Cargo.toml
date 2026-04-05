@@ -10,7 +10,6 @@ members = [
     "crates/minicode-mock-model",
     "crates/minicode-permissions",
     "crates/minicode-prompt",
-    "crates/minicode-shortcuts",
     "crates/minicode-skills",
     "crates/minicode-mcp",
     "crates/minicode-tool",
@@ -37,7 +36,6 @@ minicode-manage = { path = "crates/minicode-manage" }
 minicode-mock-model = { path = "crates/minicode-mock-model" }
 minicode-permissions = { path = "crates/minicode-permissions" }
 minicode-prompt = { path = "crates/minicode-prompt" }
-minicode-shortcuts = { path = "crates/minicode-shortcuts" }
 minicode-skills = { path = "crates/minicode-skills" }
 minicode-agent-core = { path = "crates/minicode-agent-core" }
 minicode-mcp = { path = "crates/minicode-mcp" }
@@ -47,7 +45,6 @@ minicode-cli-commands = { path = "crates/minicode-cli-commands" }
 minicode-types = { path = "crates/minicode-types" }
 minicode-tui = { path = "crates/minicode-tui" }
 minicode-background-tasks = { path = "crates/minicode-background-tasks" }
-minicode-file-review = { path = "crates/minicode-file-review" }
 anyhow = "1.0.102"
 async-trait = "0.1.89"
 dirs = "6.0.0"

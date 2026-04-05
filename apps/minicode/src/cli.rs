@@ -68,8 +68,8 @@ MCP 允许 MiniCode 访问外部工具、资源和数据。
 使用 mcp 命令可以列出、添加和移除服务器。
 
 配置作用域：
-  --project  使用项目级配置（.minicode/mcp.json）
-  (默认)     使用用户级配置（~/.minicode/mcp.json）
+  --project  使用项目级配置（.mini-code/mcp.json）
+  (默认)     使用用户级配置（~/.mini-code/mcp.json）
 
 示例：
   minicode mcp list
@@ -322,8 +322,8 @@ pub(crate) enum SkillsCommand {
         long_about = "发现并显示所有可用的 MiniCode 技能
 
 技能被自动发现于以下位置：
-  - ~/.minicode/skills/       (用户级技能)
-  - .minicode/skills/        (项目级技能)
+  - ~/.mini-code/skills/       (用户级技能)
+  - .mini-code/skills/        (项目级技能)
   - 其他配置的技能目录
 
 每个技能显示：

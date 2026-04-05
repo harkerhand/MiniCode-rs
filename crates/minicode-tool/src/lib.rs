@@ -5,9 +5,11 @@ use async_trait::async_trait;
 use jsonschema::Draft;
 use jsonschema::Validator;
 use minicode_permissions::PermissionManager;
-use minicode_prompt::{McpServerSummary, SkillSummary};
+use minicode_types::{McpServerSummary, SkillSummary};
 use serde_json::Value;
 use tokio::sync::RwLock;
+mod shortcut;
+pub use shortcut::*;
 
 #[derive(Debug, Clone)]
 pub struct ToolContext {

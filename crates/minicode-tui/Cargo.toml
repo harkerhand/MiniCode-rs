@@ -15,7 +15,6 @@ minicode-background-tasks = { workspace = true }
 minicode-cli-commands = { workspace = true }
 minicode-history = { workspace = true }
 minicode-permissions = { workspace = true }
-minicode-shortcuts = { workspace = true }
 minicode-tool = { workspace = true }
 minicode-config = { workspace = true }
 minicode-types = { workspace = true }

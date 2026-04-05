@@ -8,7 +8,7 @@ authors.workspace = true
 
 [dependencies]
 dirs = { workspace = true }
-serde = { workspace = true }
+minicode-types = { workspace = true }
 
 [lints]
 workspace = true

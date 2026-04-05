@@ -4,6 +4,26 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SkillSummary {
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct McpServerSummary {
+    pub name: String,
+    pub command: String,
+    pub status: String,
+    pub tool_count: usize,
+    pub error: Option<String>,
+    pub protocol: Option<String>,
+    pub resource_count: Option<usize>,
+    pub prompt_count: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role")]
 pub enum ChatMessage {

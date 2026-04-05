@@ -11,10 +11,10 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 jsonschema = { workspace = true }
 minicode-permissions = { workspace = true }
+minicode-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
-minicode-prompt = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,26 +1,6 @@
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SkillSummary {
-    pub name: String,
-    pub description: String,
-    pub path: String,
-    pub source: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct McpServerSummary {
-    pub name: String,
-    pub command: String,
-    pub status: String,
-    pub tool_count: usize,
-    pub error: Option<String>,
-    pub protocol: Option<String>,
-    pub resource_count: Option<usize>,
-    pub prompt_count: Option<usize>,
-}
+use minicode_types::{McpServerSummary, SkillSummary};
 
 /// 尝试读取文件内容，失败时返回 `None`。
 fn maybe_read(path: impl AsRef<Path>) -> Option<String> {

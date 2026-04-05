@@ -11,8 +11,8 @@ use minicode_permissions::{
     PermissionDecision, PermissionPromptHandler, PermissionPromptResult, session_permissions,
 };
 use minicode_prompt::build_system_prompt;
-use minicode_shortcuts::parse_local_tool_shortcut;
 use minicode_tool::ToolContext;
+use minicode_tool::parse_local_tool_shortcut;
 use minicode_types::{ChatMessage, TranscriptLine};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
