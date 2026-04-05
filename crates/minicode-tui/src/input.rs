@@ -1,4 +1,4 @@
-use minicode_cli_commands::{SLASH_COMMANDS, SlashCommand, find_matching_slash_commands};
+use minicode_cli_commands::find_matching_slash_commands;
 use unicode_width::UnicodeWidthStr;
 
 use crate::state::ScreenState;
@@ -53,20 +53,11 @@ pub(crate) fn remove_char_at(value: &mut String, char_offset: usize) -> bool {
 }
 
 /// 根据当前输入返回可见的斜杠命令候选。
-pub(crate) fn get_visible_commands(input: &str) -> Vec<&'static SlashCommand> {
+pub(crate) fn get_visible_commands(input: &str) -> Vec<(String, String)> {
     if !input.starts_with('/') {
         return vec![];
     }
-    if input == "/" {
-        let mut all = SLASH_COMMANDS.iter().collect::<Vec<_>>();
-        all.sort_by_key(|cmd| cmd.usage);
-        return all;
-    }
-    let matches = find_matching_slash_commands(input);
-    SLASH_COMMANDS
-        .iter()
-        .filter(|cmd| matches.contains(&cmd.usage.to_string()))
-        .collect()
+    find_matching_slash_commands(input)
 }
 
 /// 在历史记录中向上移动一条。

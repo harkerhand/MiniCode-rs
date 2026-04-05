@@ -185,13 +185,13 @@ pub(crate) fn render_screen(
                     .map(|cmd| {
                         ratatui::widgets::ListItem::new(Line::from(vec![
                             Span::styled(
-                                cmd.usage.to_string(),
+                                cmd.0.clone(),
                                 Style::default()
                                     .fg(Color::Cyan)
                                     .add_modifier(Modifier::BOLD),
                             ),
                             Span::raw("  "),
-                            Span::raw(cmd.description.to_string()),
+                            Span::raw(cmd.1.clone()),
                         ]))
                     })
                     .collect::<Vec<_>>();

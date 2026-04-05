@@ -135,8 +135,8 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
                             if !visible_commands.is_empty() {
                                 let selected = visible_commands
                                     .get(state.selected_slash_index.min(visible_commands.len() - 1))
-                                    .map(|x| x.usage)
-                                    .unwrap_or(state.input.as_str());
+                                    .map(|x| x.0.clone())
+                                    .unwrap_or(state.input.clone());
                                 if state.input.trim() != selected {
                                     state.input = selected.to_string();
                                     state.cursor_offset = char_len(&state.input);
@@ -220,7 +220,7 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
                                 && let Some(selected) = visible_commands
                                     .get(state.selected_slash_index.min(visible_commands.len() - 1))
                             {
-                                state.input = selected.usage.to_string();
+                                state.input = selected.0.clone();
                                 state.cursor_offset = char_len(&state.input);
                                 state.selected_slash_index = 0;
                             }

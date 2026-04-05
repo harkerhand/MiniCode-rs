@@ -184,15 +184,15 @@ pub fn format_slash_commands() -> Vec<String> {
 }
 
 /// 根据输入前缀返回可匹配的斜杠命令。
-pub fn find_matching_slash_commands(input: &str) -> Vec<String> {
+pub fn find_matching_slash_commands(input: &str) -> Vec<(String, String)> {
     let slash_commands = SLASH_COMMANDS
         .iter()
         .filter(|cmd| cmd.usage.starts_with(input))
-        .map(|cmd| cmd.usage.to_string());
+        .map(|cmd| (cmd.usage.to_string(), cmd.description.to_string()));
     let tool_commands = TOOL_COMMANDS
         .iter()
         .filter(|cmd| cmd.usage.starts_with(input))
-        .map(|cmd| cmd.usage.to_string());
+        .map(|cmd| (cmd.usage.to_string(), cmd.description.to_string()));
     slash_commands.chain(tool_commands).collect()
 }
 

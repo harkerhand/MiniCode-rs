@@ -123,7 +123,14 @@ pub(crate) async fn handle_submit(
             body: if matches.is_empty() {
                 "未识别命令。输入 /help 查看可用命令。".to_string()
             } else {
-                format!("未识别命令。你是不是想输入：\n{}", matches.join("\n"))
+                format!(
+                    "未识别命令。你是不是想输入：\n{}",
+                    matches
+                        .iter()
+                        .map(|(usage, _)| usage.clone())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
             },
         });
         return Ok(false);
