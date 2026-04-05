@@ -15,7 +15,8 @@ minicode-config = { workspace = true }
 minicode-prompt = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "process"] }
+rmcp = { workspace = true }
 
 [lints]
 workspace = true
