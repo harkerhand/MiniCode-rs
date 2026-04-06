@@ -22,11 +22,7 @@ fn transcript_from_messages() -> Vec<TranscriptLine> {
     runtime_messages()
         .into_iter()
         .filter_map(|msg| match msg {
-            ChatMessage::System { .. } => None,
-            ChatMessage::Minicode { content } => Some(TranscriptLine {
-                kind: "minicode".to_string(),
-                body: content,
-            }),
+            ChatMessage::System { .. } | ChatMessage::Minicode { .. } => None,
             ChatMessage::User { content } => Some(TranscriptLine {
                 kind: "user".to_string(),
                 body: content,

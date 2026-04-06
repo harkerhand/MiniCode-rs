@@ -44,10 +44,9 @@ impl Default for PermissionManager {
 
 impl PermissionManager {
     /// 注册用于 UI 审批流程的异步回调。
-    pub fn set_prompt_handler(&self, handler: PermissionPromptHandler) {
-        if let Ok(mut slot) = self.prompt_handler.try_lock() {
-            *slot = Some(handler);
-        }
+    pub async fn set_prompt_handler(&self, handler: PermissionPromptHandler) {
+        let mut slot = self.prompt_handler.lock().await;
+        *slot = Some(handler);
     }
 
     /// 优先走 UI 回调审批，回退到终端确认。
@@ -58,8 +57,8 @@ impl PermissionManager {
         fallback_allow: PermissionDecision,
         fallback_deny: PermissionDecision,
     ) -> Result<PermissionPromptResult> {
-        let handler = self.prompt_handler.lock().await;
-        if let Some(handler) = &*handler {
+        let handler = self.prompt_handler.lock().await.clone();
+        if let Some(handler) = handler {
             let decision = handler(request).await;
             return Ok(decision);
         }

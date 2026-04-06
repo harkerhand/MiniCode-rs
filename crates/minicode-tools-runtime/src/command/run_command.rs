@@ -1,17 +1,24 @@
 use std::process::Stdio;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::resolve_tool_path;
 use async_trait::async_trait;
 use minicode_background_tasks::register_background_shell_task;
 use minicode_config::runtime_store;
-use minicode_permissions::EnsureCommandOptions;
 use minicode_permissions::get_permission_manager;
 use minicode_tool::Tool;
 use minicode_tool::ToolResult;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio::sync::Mutex;
+use tokio::time::timeout;
+
+const DEFAULT_FOREGROUND_COMMAND_TIMEOUT_SECS: u64 = 120;
+const PIPE_DRAIN_TIMEOUT_MILLIS: u64 = 300;
 
 #[derive(Debug, Deserialize)]
 
@@ -19,6 +26,7 @@ struct RunCommandInput {
     command: String,
     args: Option<Vec<String>>,
     cwd: Option<String>,
+    timeout_secs: Option<u64>,
 }
 
 struct NormalizedCommandInput {
@@ -40,7 +48,7 @@ impl Tool for RunCommandTool {
     }
     /// 返回输入参数 schema。
     fn input_schema(&self) -> Value {
-        json!({"type":"object","properties":{"command":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"}},"required":["command"]})
+        json!({"type":"object","properties":{"command":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"timeout_secs":{"type":"integer","minimum":1}},"required":["command"]})
     }
     /// 执行本地命令，支持权限审批和后台运行。
     async fn run(&self, input: Value) -> ToolResult {
@@ -65,7 +73,6 @@ impl Tool for RunCommandTool {
 
         let use_shell = looks_like_shell_snippet(&parsed.command, parsed.args.as_ref());
         let background = is_background_shell_snippet(&parsed.command, parsed.args.as_ref());
-        let known_command = is_allowed_command(&normalized.command);
 
         let exec = if use_shell {
             "bash".to_string()
@@ -84,21 +91,7 @@ impl Tool for RunCommandTool {
         };
 
         let permission_manager = get_permission_manager();
-        let approval = if !use_shell && !known_command {
-            permission_manager
-                .ensure_command(
-                    &exec,
-                    &exec_args,
-                    effective_cwd.to_string_lossy().as_ref(),
-                    Some(EnsureCommandOptions {
-                        force_prompt_reason: Some(format!(
-                            "Unknown command '{}' is not in the built-in read-only/development set",
-                            normalized.command
-                        )),
-                    }),
-                )
-                .await
-        } else if use_shell || !is_read_only_command(&normalized.command) {
+        let approval = if !is_read_only_command(&normalized.command) {
             permission_manager
                 .ensure_command(
                     &exec,
@@ -150,25 +143,153 @@ impl Tool for RunCommandTool {
                 Err(err) => ToolResult::err(err.to_string()),
             }
         } else {
-            let out = Command::new(&exec)
-                .args(&exec_args)
-                .current_dir(&effective_cwd)
-                .output()
-                .await;
-            match out {
-                Ok(out) => {
-                    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    let output = [stdout, stderr]
-                        .into_iter()
-                        .filter(|x| !x.is_empty())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    ToolResult::ok(output)
+            run_foreground_command(&exec, &exec_args, &effective_cwd, parsed.timeout_secs).await
+        }
+    }
+}
+
+async fn run_foreground_command(
+    exec: &str,
+    exec_args: &[String],
+    cwd: &std::path::Path,
+    timeout_secs_input: Option<u64>,
+) -> ToolResult {
+    let timeout_secs = timeout_secs_input
+        .filter(|v| *v > 0)
+        .or_else(|| {
+            std::env::var("MINICODE_RUN_COMMAND_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .filter(|v| *v > 0)
+        })
+        .unwrap_or(DEFAULT_FOREGROUND_COMMAND_TIMEOUT_SECS);
+
+    let mut cmd = Command::new(exec);
+    cmd.args(exec_args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) => return ToolResult::err(err.to_string()),
+    };
+
+    let Some(mut stdout) = child.stdout.take() else {
+        return ToolResult::err("run_command failed: stdout pipe unavailable");
+    };
+    let Some(mut stderr) = child.stderr.take() else {
+        return ToolResult::err("run_command failed: stderr pipe unavailable");
+    };
+
+    let stdout_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let stderr_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let stdout_buf_task = Arc::clone(&stdout_buf);
+    let stderr_buf_task = Arc::clone(&stderr_buf);
+
+    let stdout_task = tokio::spawn(async move {
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stdout.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let mut out = stdout_buf_task.lock().await;
+                    out.extend_from_slice(&chunk[..n]);
                 }
-                Err(err) => ToolResult::err(err.to_string()),
+                Err(_) => break,
             }
         }
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stderr.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let mut out = stderr_buf_task.lock().await;
+                    out.extend_from_slice(&chunk[..n]);
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let (timed_out, status) = match timeout(Duration::from_secs(timeout_secs), child.wait()).await {
+        Ok(wait_result) => match wait_result {
+            Ok(status) => (false, Some(status)),
+            Err(err) => return ToolResult::err(err.to_string()),
+        },
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            (true, None)
+        }
+    };
+
+    wait_pipe_reader(stdout_task).await;
+    wait_pipe_reader(stderr_task).await;
+    let stdout = String::from_utf8_lossy(&stdout_buf.lock().await)
+        .trim()
+        .to_string();
+    let stderr = String::from_utf8_lossy(&stderr_buf.lock().await)
+        .trim()
+        .to_string();
+    let combined = [stdout, stderr]
+        .into_iter()
+        .filter(|x| !x.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if timed_out {
+        if combined.is_empty() {
+            return ToolResult::err(format!(
+                "Command timed out after {}s: {}",
+                timeout_secs,
+                format_command_line(exec, exec_args)
+            ));
+        }
+        return ToolResult::err(format!(
+            "Command timed out after {}s: {}\nPartial output:\n{}",
+            timeout_secs,
+            format_command_line(exec, exec_args),
+            combined
+        ));
+    }
+
+    let Some(status) = status else {
+        return ToolResult::err("run_command failed: missing exit status");
+    };
+
+    if status.success() {
+        return ToolResult::ok(combined);
+    }
+
+    let code = status
+        .code()
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "terminated by signal".to_string());
+    if combined.is_empty() {
+        ToolResult::err(format!("Command exited with status: {code}"))
+    } else {
+        ToolResult::err(format!("Command exited with status: {code}\n{combined}"))
+    }
+}
+
+async fn wait_pipe_reader(mut handle: tokio::task::JoinHandle<()>) {
+    tokio::select! {
+        _ = &mut handle => {},
+        _ = tokio::time::sleep(Duration::from_millis(PIPE_DRAIN_TIMEOUT_MILLIS)) => {
+            handle.abort();
+        }
+    }
+}
+
+fn format_command_line(exec: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        exec.to_string()
+    } else {
+        format!("{} {}", exec, args.join(" "))
     }
 }
 
@@ -214,15 +335,6 @@ fn looks_like_shell_snippet(command: &str, args: Option<&Vec<String>>) -> bool {
         return false;
     }
     command.chars().any(|c| "|&;<>()$`".contains(c))
-}
-
-/// 判断命令是否在允许集合中。
-fn is_allowed_command(command: &str) -> bool {
-    is_read_only_command(command)
-        || matches!(
-            command,
-            "git" | "npm" | "node" | "python3" | "pytest" | "bash" | "sh" | "bun"
-        )
 }
 
 /// 判断命令是否属于只读命令。

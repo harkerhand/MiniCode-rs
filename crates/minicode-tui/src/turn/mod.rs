@@ -71,7 +71,9 @@ pub(crate) async fn handle_submit(
         state.is_busy = true;
         state.status = Some(format!("Running {}...", shortcut.tool_name));
         let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
-        permission_manager.set_prompt_handler(build_prompt_handler(tx.clone()));
+        permission_manager
+            .set_prompt_handler(build_prompt_handler(tx.clone()))
+            .await;
         let payload = shortcut.input;
         let tool_name_owned = shortcut.tool_name.to_string();
 
@@ -133,7 +135,9 @@ pub(crate) async fn handle_submit(
     state.is_busy = true;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
-    permission_manager.set_prompt_handler(build_prompt_handler(tx.clone()));
+    permission_manager
+        .set_prompt_handler(build_prompt_handler(tx.clone()))
+        .await;
     let model = get_model_adapter();
 
     tokio::spawn(async move {
