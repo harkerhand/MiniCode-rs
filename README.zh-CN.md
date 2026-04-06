@@ -192,6 +192,7 @@ MINI_CODE_MODEL_MODE=mock npm run dev
 - `/model`
 - `/model <name>`
 - `/config-paths`
+- `/clear`
 
 ### 终端交互能力
 

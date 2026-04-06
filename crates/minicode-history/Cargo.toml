@@ -11,6 +11,7 @@ anyhow = { workspace = true }
 minicode-config = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 minicode-types = { workspace = true }
 

@@ -1,4 +1,4 @@
-use minicode_types::{ChatMessage, TranscriptLine};
+use minicode_types::TranscriptLine;
 
 use crate::state::{PendingApproval, ScreenState, TurnEvent};
 
@@ -24,10 +24,7 @@ fn summarize_tool_input(tool_name: &str, input: &serde_json::Value) -> String {
 }
 
 /// 应用单个回合事件到 UI 状态，必要时返回新消息列表。
-pub(crate) fn apply_turn_event(
-    state: &mut ScreenState,
-    event: TurnEvent,
-) -> Option<Vec<ChatMessage>> {
+pub(crate) fn apply_turn_event(state: &mut ScreenState, event: TurnEvent) -> bool {
     match event {
         TurnEvent::ToolStart { tool_name, input } => {
             state.active_tool = Some(tool_name.clone());
@@ -41,7 +38,7 @@ pub(crate) fn apply_turn_event(
                 ),
             });
             state.transcript_scroll_offset = 0;
-            None
+            false
         }
         TurnEvent::ToolResult {
             tool_name,
@@ -58,7 +55,7 @@ pub(crate) fn apply_turn_event(
                 body: output,
             });
             state.transcript_scroll_offset = 0;
-            None
+            false
         }
         TurnEvent::Assistant(content) => {
             state.transcript.push(TranscriptLine {
@@ -66,7 +63,7 @@ pub(crate) fn apply_turn_event(
                 body: content,
             });
             state.transcript_scroll_offset = 0;
-            None
+            false
         }
         TurnEvent::Progress(content) => {
             state.transcript.push(TranscriptLine {
@@ -74,7 +71,7 @@ pub(crate) fn apply_turn_event(
                 body: content,
             });
             state.transcript_scroll_offset = 0;
-            None
+            false
         }
         TurnEvent::Approval { request, responder } => {
             state.pending_approval = Some(PendingApproval {
@@ -85,7 +82,7 @@ pub(crate) fn apply_turn_event(
                 feedback: String::new(),
             });
             state.status = Some("Approval required...".to_string());
-            None
+            false
         }
         TurnEvent::ToolDone(result) => {
             state.recent_tools.push((
@@ -105,8 +102,8 @@ pub(crate) fn apply_turn_event(
             });
             state.active_tool = None;
             state.status = None;
-            None
+            false
         }
-        TurnEvent::Done(updated) => Some(updated),
+        TurnEvent::Done => true,
     }
 }

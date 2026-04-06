@@ -3,6 +3,7 @@ use minicode_config::{
     MiniCodeSettings, claude_settings_path, load_runtime_config, mini_code_mcp_path,
     mini_code_permissions_path, mini_code_settings_path, save_minicode_settings,
 };
+use minicode_history::{clear_history_entries, clear_runtime_messages_keep_system};
 use minicode_tool::{TOOL_COMMANDS, ToolRegistry};
 
 pub struct SlashCommand {
@@ -168,6 +169,16 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
                 "permission store: {}",
                 mini_code_permissions_path(cwd).display()
             ))
+        },
+    },
+    SlashCommand {
+        prefix: "/clear",
+        usage: "/clear",
+        description: "清空当前会话上下文（保留 system prompt）。",
+        handler: |_, _, _| {
+            clear_runtime_messages_keep_system();
+            clear_history_entries()?;
+            Ok("上下文已清空（保留 system prompt）。".to_string())
         },
     },
 ];

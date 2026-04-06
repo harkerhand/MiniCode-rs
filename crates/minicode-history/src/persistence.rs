@@ -12,8 +12,13 @@ use crate::{SessionIndex, SessionIndexEntry, SessionMetadata, SessionRecord};
 
 /// 把完整的会话记录保存到磁盘上，供后续恢复使用
 pub fn save_session(cwd: impl AsRef<Path>, session: &SessionRecord) -> Result<()> {
-    if session.messages.len() <= 1 {
-        // 只有一条消息（通常是系统初始化消息），不保存
+    let messages: Vec<ChatMessage> = session
+        .messages
+        .iter()
+        .filter(|m| !matches!(m, ChatMessage::System { .. }))
+        .cloned()
+        .collect();
+    if messages.is_empty() {
         return Ok(());
     }
 
@@ -28,7 +33,7 @@ pub fn save_session(cwd: impl AsRef<Path>, session: &SessionRecord) -> Result<()
 
     let conv_path = project_session_conversation_path(cwd.as_ref(), &session.session_id);
     let conversation = serde_json::json!({
-        "messages": session.messages,
+        "messages": messages,
     });
     fs::write(
         conv_path,

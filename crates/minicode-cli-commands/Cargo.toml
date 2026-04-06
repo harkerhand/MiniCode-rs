@@ -9,6 +9,7 @@ authors.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 minicode-config = { workspace = true }
+minicode-history = { workspace = true }
 minicode-tool = { workspace = true }
 
 [lints]

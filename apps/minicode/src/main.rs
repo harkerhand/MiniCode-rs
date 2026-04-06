@@ -119,8 +119,8 @@ async fn launch_tui_app(
         }]
     };
 
-    init_initial_messages(initial_messages)?;
-    init_initial_transcript(initial_transcript)?;
+    set_runtime_messages(initial_messages);
+    set_runtime_transcript(initial_transcript);
     init_session_permissions(permissions.clone())?;
     init_session_id(session_id)?;
     init_session_start_time(std::time::SystemTime::now())?;

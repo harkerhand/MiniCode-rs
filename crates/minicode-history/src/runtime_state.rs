@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
@@ -13,33 +13,63 @@ pub fn generate_session_id() -> String {
     format!("sess_{:x}_{}", timestamp, uuid::Uuid::new_v4().simple())
 }
 
-static INITIAL_MESSAGES: OnceLock<Vec<ChatMessage>> = OnceLock::new();
-static INITIAL_TRANSCRIPT: OnceLock<Vec<TranscriptLine>> = OnceLock::new();
+static MESSAGES: LazyLock<Mutex<Vec<ChatMessage>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static TRANSCRIPT: LazyLock<Mutex<Vec<TranscriptLine>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 static SESSION_ID: OnceLock<String> = OnceLock::new();
 static SESSION_START_TIME: OnceLock<SystemTime> = OnceLock::new();
 
-pub fn init_initial_messages(messages: Vec<ChatMessage>) -> Result<()> {
-    INITIAL_MESSAGES
-        .set(messages)
-        .map_err(|_| anyhow!("Initial messages already initialized"))
+fn strip_system_messages(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    messages
+        .into_iter()
+        .filter(|m| !matches!(m, ChatMessage::System { .. }))
+        .collect()
 }
 
-pub fn initial_messages() -> &'static Vec<ChatMessage> {
-    INITIAL_MESSAGES
-        .get()
-        .expect("Initial messages not initialized")
+pub fn initial_messages() -> Vec<ChatMessage> {
+    runtime_messages()
 }
 
-pub fn init_initial_transcript(transcript: Vec<TranscriptLine>) -> Result<()> {
-    INITIAL_TRANSCRIPT
-        .set(transcript)
-        .map_err(|_| anyhow!("Initial transcript already initialized"))
+pub fn set_runtime_messages(messages: Vec<ChatMessage>) {
+    if let Ok(mut guard) = MESSAGES.lock() {
+        *guard = strip_system_messages(messages);
+    }
 }
 
-pub fn initial_transcript() -> &'static Vec<TranscriptLine> {
-    INITIAL_TRANSCRIPT
-        .get()
-        .expect("Initial transcript not initialized")
+pub fn runtime_messages() -> Vec<ChatMessage> {
+    if let Ok(guard) = MESSAGES.lock() {
+        return guard.clone();
+    }
+    Vec::new()
+}
+
+pub fn clear_runtime_messages_keep_system() {
+    if let Ok(mut guard) = MESSAGES.lock() {
+        guard.clear();
+    }
+    clear_runtime_transcript();
+}
+
+pub fn initial_transcript() -> Vec<TranscriptLine> {
+    runtime_transcript()
+}
+
+pub fn set_runtime_transcript(transcript: Vec<TranscriptLine>) {
+    if let Ok(mut guard) = TRANSCRIPT.lock() {
+        *guard = transcript;
+    }
+}
+
+pub fn runtime_transcript() -> Vec<TranscriptLine> {
+    if let Ok(guard) = TRANSCRIPT.lock() {
+        return guard.clone();
+    }
+    Vec::new()
+}
+
+pub fn clear_runtime_transcript() {
+    if let Ok(mut guard) = TRANSCRIPT.lock() {
+        guard.clear();
+    }
 }
 
 pub fn init_session_id(value: String) -> Result<()> {

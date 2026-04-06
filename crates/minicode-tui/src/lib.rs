@@ -11,7 +11,7 @@ use crossterm::terminal::{
 use minicode_config::get_runtime_config;
 use minicode_history::{
     estimate_context_tokens, initial_messages, initial_transcript, load_history_entries,
-    session_id, session_start_time,
+    runtime_messages, session_id, session_start_time, set_runtime_transcript,
 };
 use minicode_types::TranscriptLine;
 use ratatui::Terminal;
@@ -27,9 +27,7 @@ use input::{
     char_len, get_visible_commands, history_down, history_up, insert_char_at, remove_char_at,
     remove_char_before, scroll_transcript_by, toggle_tool_details,
 };
-pub use minicode_history::{
-    init_initial_messages, init_initial_transcript, init_session_id, init_session_start_time,
-};
+pub use minicode_history::{init_session_id, init_session_start_time};
 pub use minicode_permissions::init_session_permissions;
 use render::render_screen;
 use state::ScreenState;
@@ -70,13 +68,13 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // 使用预先准备好的数据（在 run() 函数中已经加载并处理过）
-    let mut messages = initial_messages().clone();
-    let initial_transcript = initial_transcript().clone();
+    let initial_messages = initial_messages();
+    let initial_transcript = initial_transcript();
 
     let mut state = ScreenState {
         history: load_history_entries(),
-        message_count: messages.len(),
-        context_tokens_estimate: estimate_context_tokens(&messages),
+        message_count: initial_messages.len(),
+        context_tokens_estimate: estimate_context_tokens(&initial_messages),
         session_id: session_id().clone(),
         session_start_time: session_start_time(),
         turn_count: 0,
@@ -149,14 +147,8 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
                             state.input.clear();
                             state.cursor_offset = 0;
                             state.selected_slash_index = 0;
-                            match handle_submit(
-                                &mut terminal,
-                                &mut args,
-                                &mut state,
-                                &mut messages,
-                                submitted,
-                            )
-                            .await
+                            match handle_submit(&mut terminal, &mut args, &mut state, submitted)
+                                .await
                             {
                                 Ok(exit) => should_exit = exit,
                                 Err(err) => {
@@ -169,9 +161,10 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
                                     state.active_tool = None;
                                     state.pending_approval = None;
                                     state.transcript_scroll_offset = 0;
+                                    set_runtime_transcript(state.transcript.clone());
                                 }
                             }
-                            state.message_count = messages.len();
+                            state.message_count = runtime_messages().len();
                         }
                         KeyEvent {
                             code: KeyCode::Backspace,
@@ -359,7 +352,7 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     let session = minicode_history::SessionRecord {
         session_id: session_id().clone(),
         metadata,
-        messages,
+        messages: runtime_messages(),
     };
 
     let _ = minicode_history::save_session(&args.cwd, &session);

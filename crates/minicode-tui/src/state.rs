@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use minicode_agent_core::AgentTurnCallbacks;
 use minicode_permissions::{PermissionPromptRequest, PermissionPromptResult};
 use minicode_tool::{ToolRegistry, ToolResult};
-use minicode_types::{ChatMessage, ModelAdapter, TranscriptLine};
+use minicode_types::{ModelAdapter, TranscriptLine};
 use tokio::sync::{mpsc, oneshot};
 
 pub(crate) struct PendingApproval {
@@ -33,7 +33,7 @@ pub(crate) enum TurnEvent {
         request: PermissionPromptRequest,
         responder: oneshot::Sender<PermissionPromptResult>,
     },
-    Done(Vec<ChatMessage>),
+    Done,
     ToolDone(ToolResult),
 }
 
