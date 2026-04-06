@@ -2,6 +2,7 @@ use std::io::BufRead;
 use std::path::Path;
 
 use anyhow::Result;
+use serde::Deserialize;
 
 use crate::{SessionIndexEntry, find_sessions_by_prefix, load_sessions};
 
@@ -100,5 +101,14 @@ pub fn interactive_select<T: Clone>(
             eprintln!("✗ 无效的选择。");
             Ok(None)
         }
+    }
+}
+
+/// 读取 TOML 文件，不存在时返回默认值。
+pub fn read_toml_file<T: for<'de> Deserialize<'de> + Default>(path: impl AsRef<Path>) -> Result<T> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(toml::from_str(&content)?),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+        Err(err) => Err(err.into()),
     }
 }

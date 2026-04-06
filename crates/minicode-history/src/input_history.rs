@@ -6,7 +6,9 @@ use anyhow::Result;
 use minicode_config::{project_session_dir, runtime_store};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+use crate::read_toml_file;
+
+#[derive(Debug, Serialize, Deserialize, Default)]
 struct HistoryFile {
     entries: Vec<String>,
 }
@@ -76,22 +78,18 @@ pub fn clear_history_entries() -> Result<()> {
 }
 
 /// 从磁盘加载当前活动会话的历史输入并覆盖内存中的历史输入状态。
-pub fn load_input_history_from_file() -> Result<()> {
+pub fn load_input_history_from_file() -> Vec<String> {
     let cwd = runtime_store().cwd.clone();
     let session_id = runtime_store().session_id.clone();
     let path = session_history_path(cwd, &session_id);
-    let content = fs::read_to_string(path)?;
-    let parsed = toml::from_str::<HistoryFile>(&content)?;
-    let history = get_input_history();
-    let mut history = history.lock().unwrap_or_else(|e| e.into_inner());
-    *history = parsed.entries;
-    Ok(())
+    let history: HistoryFile = read_toml_file(path).unwrap_or_default();
+    history.entries
 }
 
 static INPUT_HISTORY: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
 
 pub fn get_input_history() -> Arc<Mutex<Vec<String>>> {
     INPUT_HISTORY
-        .get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+        .get_or_init(|| Arc::new(Mutex::new(load_input_history_from_file())))
         .clone()
 }

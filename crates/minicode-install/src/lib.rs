@@ -78,7 +78,9 @@ pub fn run_install_wizard(cwd: impl AsRef<Path>) -> Result<()> {
     }
 
     let model = prompt_line("Model name", Some(effective.model.as_str()))?;
+    effective.model = model;
     let base_url = prompt_line("ANTHROPIC_BASE_URL", Some(effective.base_url.as_str()))?;
+    effective.base_url = base_url;
 
     let saved_token_suffix = if effective.auth_token.is_some() {
         " [saved]"
@@ -98,20 +100,7 @@ pub fn run_install_wizard(cwd: impl AsRef<Path>) -> Result<()> {
     } else {
         return Err(anyhow::anyhow!("ANTHROPIC_AUTH_TOKEN cannot be empty"));
     };
-
-    let mut env = std::collections::HashMap::new();
-    env.insert(
-        "ANTHROPIC_BASE_URL".to_string(),
-        serde_json::Value::String(base_url.clone()),
-    );
-    env.insert(
-        "ANTHROPIC_AUTH_TOKEN".to_string(),
-        serde_json::Value::String(auth_token.clone()),
-    );
-    env.insert(
-        "ANTHROPIC_MODEL".to_string(),
-        serde_json::Value::String(model.clone()),
-    );
+    effective.auth_token = Some(auth_token);
 
     save_minicode_settings(&effective)?;
 

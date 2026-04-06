@@ -8,6 +8,8 @@ use minicode_config::{project_session_conversation_path, runtime_store};
 use minicode_types::ChatMessage;
 use serde::{Deserialize, Serialize};
 
+use crate::read_toml_file;
+
 /// Generate a unique session ID with timestamp and UUID
 pub fn generate_session_id() -> String {
     let timestamp = SystemTime::now()
@@ -17,7 +19,7 @@ pub fn generate_session_id() -> String {
     format!("sess_{:x}_{}", timestamp, uuid::Uuid::new_v4().simple())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ConversationFile {
     messages: Vec<ChatMessage>,
 }
@@ -44,18 +46,12 @@ fn persist_runtime_messages(messages: &[ChatMessage]) {
     let _ = save_session_messages(&cwd, &session_id, messages);
 }
 
-pub fn load_runtime_messages_from_file() {
+pub fn load_runtime_messages_from_file() -> Vec<ChatMessage> {
     let cwd = runtime_store().cwd.clone();
     let session_id = runtime_store().session_id.clone();
     let path = project_session_conversation_path(cwd, &session_id);
-    if path.exists()
-        && let Ok(content) = fs::read_to_string(path)
-        && let Ok(conv) = toml::from_str::<ConversationFile>(&content)
-    {
-        let arc = get_messages();
-        let mut guard = arc.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = conv.messages;
-    }
+    let messages: ConversationFile = read_toml_file(path).unwrap_or_default();
+    messages.messages
 }
 
 pub fn runtime_messages() -> Vec<ChatMessage> {
@@ -83,6 +79,6 @@ static MESSAGES: OnceLock<Arc<Mutex<Vec<ChatMessage>>>> = OnceLock::new();
 
 pub fn get_messages() -> Arc<Mutex<Vec<ChatMessage>>> {
     MESSAGES
-        .get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+        .get_or_init(|| Arc::new(Mutex::new(load_runtime_messages_from_file())))
         .clone()
 }

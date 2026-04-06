@@ -8,7 +8,6 @@ authors.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-serde_json = { workspace = true }
 minicode-config = { workspace = true }
 
 [lints]

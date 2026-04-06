@@ -24,15 +24,11 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // 尽早确定会话并初始化 RuntimeStore
-    let mut need_recover_history = false;
     let session_id = match &cli.command {
         Some(Command::History {
             command: HistoryCommand::Resume { session_id },
         }) => match resolve_and_load_session(&cwd, session_id).await? {
-            Some(resolved_session_id) => {
-                need_recover_history = true;
-                resolved_session_id
-            }
+            Some(resolved_session_id) => resolved_session_id,
             None => return Ok(()),
         },
         Some(_) => generate_session_id(),
@@ -43,7 +39,6 @@ async fn run() -> Result<()> {
                 match check_session(&cwd, &resume_id) {
                     Ok(()) => {
                         eprintln!("✨ 正在加载会话数据...\n");
-                        need_recover_history = true;
                         resume_id
                     }
                     Err(e) => {
@@ -58,10 +53,6 @@ async fn run() -> Result<()> {
         }
     };
     init_runtime_store(&cwd, session_id);
-    if need_recover_history {
-        load_runtime_messages_from_file();
-        load_input_history_from_file()?;
-    }
 
     // 处理管理命令（history resume 会继续复用常规启动流程）
     if let Some(command) = cli.command
