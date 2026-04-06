@@ -23,6 +23,10 @@ fn transcript_from_messages() -> Vec<TranscriptLine> {
         .into_iter()
         .filter_map(|msg| match msg {
             ChatMessage::System { .. } => None,
+            ChatMessage::Minicode { content } => Some(TranscriptLine {
+                kind: "minicode".to_string(),
+                body: content,
+            }),
             ChatMessage::User { content } => Some(TranscriptLine {
                 kind: "user".to_string(),
                 body: content,
@@ -82,6 +86,7 @@ fn transcript_title_line(kind: &str) -> Line<'static> {
     let (label, style) = match kind {
         "assistant" => ("assistant", theme.assistant_style()),
         "user" => ("you", theme.user_style()),
+        "minicode" => ("minicode", theme.progress_style()),
         "progress" => ("progress", theme.progress_style()),
         "tool:error" => ("tool err", theme.tool_error_style()),
         "tool" => ("tool", theme.tool_style()),

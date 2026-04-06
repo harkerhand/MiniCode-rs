@@ -131,7 +131,7 @@ impl AnthropicModelAdapter {
         for msg in messages {
             match msg {
                 ChatMessage::System { content } => system.push(content.clone()),
-                ChatMessage::User { content } => {
+                ChatMessage::Minicode { content } | ChatMessage::User { content } => {
                     push(
                         &mut converted,
                         "user",

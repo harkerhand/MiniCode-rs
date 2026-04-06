@@ -14,6 +14,7 @@ pub fn estimate_context_tokens(messages: &[ChatMessage]) -> usize {
         .map(|msg| {
             let content_tokens = match msg {
                 ChatMessage::System { content }
+                | ChatMessage::Minicode { content }
                 | ChatMessage::User { content }
                 | ChatMessage::Assistant { content }
                 | ChatMessage::AssistantProgress { content } => estimate_text_tokens(content),

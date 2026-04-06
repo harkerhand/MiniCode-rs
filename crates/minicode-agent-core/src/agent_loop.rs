@@ -66,7 +66,7 @@ pub async fn run_agent_turn(
     let mut new_messages = Vec::new();
 
     let push_continue = |messages: &mut Vec<ChatMessage>, content: &str| {
-        messages.push(ChatMessage::User {
+        messages.push(ChatMessage::Minicode {
             content: content.to_string(),
         });
     };

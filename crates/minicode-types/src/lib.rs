@@ -29,6 +29,8 @@ pub struct McpServerSummary {
 pub enum ChatMessage {
     #[serde(rename = "system")]
     System { content: String },
+    #[serde(rename = "minicode")]
+    Minicode { content: String },
     #[serde(rename = "user")]
     User { content: String },
     #[serde(rename = "assistant")]
