@@ -432,7 +432,7 @@ pub struct McpServerConfig {
 
 ### 配置加载优先级 (minicode-config)
 ```rust
-fn load_effective_settings(cwd: impl AsRef<Path>) -> Result<MiniCodeSettings> {
+fn config_from_file(cwd: impl AsRef<Path>) -> Result<MiniCodeSettings> {
     // 优先级从低到高：
     1. ~/.claude/settings.json (Claude 默认配置)
     2. ~/.mini-code/mcp.json (全局 MCP 配置)

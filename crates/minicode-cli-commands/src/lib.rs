@@ -1,16 +1,20 @@
 use anyhow::Result;
 use minicode_config::{
-    MiniCodeSettings, claude_settings_path, load_runtime_config, mini_code_mcp_path,
-    mini_code_permissions_path, mini_code_settings_path, save_minicode_settings,
+    load_runtime_config, mini_code_mcp_path, mini_code_permissions_path, mini_code_settings_path,
+    save_minicode_settings,
 };
-use minicode_history::{clear_history_entries, clear_runtime_messages_keep_system};
+use minicode_history::{clear_history_entries, clear_runtime_messages};
 use minicode_tool::{TOOL_COMMANDS, ToolRegistry};
+use std::future::Future;
+use std::pin::Pin;
+
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub struct SlashCommand {
     pub prefix: &'static str,
     pub usage: &'static str,
     pub description: &'static str,
-    pub handler: fn(&str, &std::path::Path, &ToolRegistry) -> Result<String>,
+    pub handler: fn(&str, &std::path::Path, &ToolRegistry) -> BoxFuture<'static, Result<String>>,
 }
 
 pub const SLASH_COMMANDS: &[SlashCommand] = &[
@@ -18,87 +22,91 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         prefix: "/help",
         usage: "/help",
         description: "显示可用斜杠命令。",
-        handler: |_, _, _| Ok(format_slash_commands().join("\n")),
+        handler: |_, _, _| Box::pin(async move { Ok(format_slash_commands().join("\n")) }),
     },
     SlashCommand {
         prefix: "/tools",
         usage: "/tools",
         description: "列出可用工具。",
         handler: |_, _, tools| {
-            Ok(tools
+            let str = tools
                 .list()
                 .iter()
                 .map(|tool| format!("{}: {}", tool.name(), tool.description()))
                 .collect::<Vec<_>>()
-                .join("\n"))
+                .join("\n");
+            Box::pin(async move { Ok(str) })
         },
     },
     SlashCommand {
         prefix: "/status",
         usage: "/status",
         description: "显示当前模型与配置来源。",
-        handler: |_, cwd, _| {
-            let runtime = load_runtime_config(cwd)?;
-            let auth = if runtime.auth_token.is_some() {
-                "ANTHROPIC_AUTH_TOKEN"
-            } else {
-                "ANTHROPIC_API_KEY"
-            };
-            Ok([
-                format!("model: {}", runtime.model),
-                format!("baseUrl: {}", runtime.base_url),
-                format!("auth: {auth}"),
-                format!("mcp servers: {}", runtime.mcp_servers.len()),
-                runtime.source_summary,
-            ]
-            .join("\n"))
+        handler: |_, _, _| {
+            Box::pin(async move {
+                let runtime = load_runtime_config()?;
+                let auth = if runtime.auth_token.is_some() {
+                    "ANTHROPIC_AUTH_TOKEN"
+                } else {
+                    "ANTHROPIC_API_KEY"
+                };
+                Ok([
+                    format!("model: {}", runtime.model),
+                    format!("baseUrl: {}", runtime.base_url),
+                    format!("auth: {auth}"),
+                    format!("mcp servers: {}", runtime.mcp_servers.len()),
+                ]
+                .join("\n"))
+            })
         },
     },
     SlashCommand {
         prefix: "/model ",
         usage: "/model <model-name>",
         description: "保存模型覆盖到 ~/.mini-code/settings.json。",
-        handler: |input, cwd, _| {
-            let model = input.trim_start_matches("/model ");
-            if model.is_empty() {
-                return Err(anyhow::anyhow!("Model name is required."));
-            }
-            let mut runtime = load_runtime_config(cwd)?;
-            runtime.model = model.to_string();
-            save_minicode_settings(MiniCodeSettings {
-                model: Some(model.to_string()),
-                ..Default::default()
-            })?;
-            Ok(format!("Model updated to: {}", runtime.model))
+        handler: |input, _, _| {
+            let model = input.trim_start_matches("/model ").to_string();
+            Box::pin(async move {
+                if model.is_empty() {
+                    return Err(anyhow::anyhow!("Model name is required."));
+                }
+                let mut runtime = load_runtime_config()?;
+                runtime.model = model.to_string();
+                save_minicode_settings(&runtime)?;
+                Ok(format!("Model updated to: {}", runtime.model))
+            })
         },
     },
     SlashCommand {
         prefix: "/model",
         usage: "/model",
         description: "显示当前模型。",
-        handler: |_, cwd, _| {
-            let runtime = load_runtime_config(cwd)?;
-            Ok(format!("current model: {}", runtime.model))
+        handler: |_, _, _| {
+            Box::pin(async move {
+                let runtime = load_runtime_config()?;
+                Ok(format!("current model: {}", runtime.model))
+            })
         },
     },
     SlashCommand {
         prefix: "/config-paths",
         usage: "/config-paths",
         description: "显示配置文件路径。",
-        handler: |cwd, _, _| {
-            Ok([
-                format!(
-                    "mini-code settings: {}",
-                    mini_code_settings_path().display()
-                ),
-                format!(
-                    "mini-code permissions: {}",
-                    mini_code_permissions_path(cwd).display()
-                ),
-                format!("mini-code mcp: {}", mini_code_mcp_path().display()),
-                format!("compat fallback: {}", claude_settings_path().display()),
-            ]
-            .join("\n"))
+        handler: |_, _, _| {
+            Box::pin(async move {
+                Ok([
+                    format!(
+                        "mini-code settings: {}",
+                        mini_code_settings_path().display()
+                    ),
+                    format!(
+                        "mini-code permissions: {}",
+                        mini_code_permissions_path().display()
+                    ),
+                    format!("mini-code mcp: {}", mini_code_mcp_path().display()),
+                ]
+                .join("\n"))
+            })
         },
     },
     SlashCommand {
@@ -107,14 +115,13 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "列出已发现技能。",
         handler: |_, _, tools| {
             let skills = tools.get_skills();
-            if skills.is_empty() {
-                return Ok("No skills discovered.".to_string());
-            }
-            Ok(skills
+            let str = skills
                 .iter()
                 .map(|s| format!("{}  {}  [{}]", s.name, s.description, s.source))
                 .collect::<Vec<_>>()
-                .join("\n"))
+                .join("\n");
+
+            Box::pin(async move { Ok(str) })
         },
     },
     SlashCommand {
@@ -123,10 +130,7 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "显示 MCP 服务状态。",
         handler: |_, _, tools| {
             let servers = tools.get_mcp_servers();
-            if servers.is_empty() {
-                return Ok("No MCP servers configured.".to_string());
-            }
-            Ok(servers
+            let str = servers
                 .iter()
                 .map(|s| {
                     let protocol = s
@@ -157,18 +161,21 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
                     )
                 })
                 .collect::<Vec<_>>()
-                .join("\n"))
+                .join("\n");
+            Box::pin(async move { Ok(str) })
         },
     },
     SlashCommand {
         prefix: "/permissions",
         usage: "/permissions",
         description: "显示权限存储路径。",
-        handler: |_, cwd, _| {
-            Ok(format!(
-                "permission store: {}",
-                mini_code_permissions_path(cwd).display()
-            ))
+        handler: |_, _, _| {
+            Box::pin(async move {
+                Ok(format!(
+                    "permission store: {}",
+                    mini_code_permissions_path().display()
+                ))
+            })
         },
     },
     SlashCommand {
@@ -176,9 +183,11 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         usage: "/clear",
         description: "清空当前会话上下文（保留 system prompt）。",
         handler: |_, _, _| {
-            clear_runtime_messages_keep_system();
-            clear_history_entries()?;
-            Ok("上下文已清空（保留 system prompt）。".to_string())
+            Box::pin(async move {
+                clear_runtime_messages();
+                clear_history_entries()?;
+                Ok("上下文已清空（保留 system prompt）。".to_string())
+            })
         },
     },
 ];
@@ -217,7 +226,7 @@ pub async fn try_handle_local_command(
 ) -> Result<Option<String>> {
     for cmd in SLASH_COMMANDS {
         if input.starts_with(cmd.prefix) {
-            let result = (cmd.handler)(input, cwd, tools)?;
+            let result = (cmd.handler)(input, cwd, tools).await?;
             return Ok(Some(result));
         }
     }

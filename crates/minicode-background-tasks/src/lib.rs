@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use minicode_tool::BackgroundTaskResult;
-use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
 struct BackgroundTaskRecord {

@@ -47,10 +47,7 @@ pub(crate) async fn handle_submit(
         return Ok(true);
     }
 
-    let history_entry = ChatMessage::User {
-        content: input.clone(),
-    };
-    let _ = add_history_entry(&history_entry);
+    let _ = add_history_entry(&input);
     state.history = load_history_entries();
     state.history_index = state.history.len();
     state.history_draft.clear();

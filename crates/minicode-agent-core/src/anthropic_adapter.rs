@@ -30,16 +30,14 @@ struct AnthropicResponse {
 pub struct AnthropicModelAdapter {
     client: reqwest::Client,
     tools: Arc<ToolRegistry>,
-    cwd: std::path::PathBuf,
 }
 
 impl AnthropicModelAdapter {
     /// 创建 Anthropic 适配器并绑定工具注册表与工作目录。
-    pub fn new(tools: Arc<ToolRegistry>, cwd: std::path::PathBuf) -> Self {
+    pub fn new(tools: Arc<ToolRegistry>) -> Self {
         Self {
             client: reqwest::Client::new(),
             tools,
-            cwd,
         }
     }
 
@@ -184,7 +182,7 @@ impl AnthropicModelAdapter {
 
     /// 加载当前请求所需的运行时配置。
     async fn get_runtime(&self) -> Result<RuntimeConfig> {
-        load_runtime_config(&self.cwd)
+        load_runtime_config()
     }
 }
 
@@ -232,7 +230,7 @@ impl ModelAdapter for AnthropicModelAdapter {
             "system": system,
             "messages": anth_messages,
             "tools": tool_defs,
-            "max_tokens": runtime.max_output_tokens,
+            "max_tokens": runtime.max_token_window,
         });
 
         let retry_limit = Self::get_retry_limit();

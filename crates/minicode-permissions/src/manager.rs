@@ -3,7 +3,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use minicode_config::{get_active_session_context, project_session_permissions_path};
+use minicode_config::{project_session_permissions_path, runtime_store};
 
 use crate::{
     EnsureCommandOptions, PermissionChoice, PermissionDecision, PermissionManager,
@@ -14,9 +14,9 @@ use crate::{
 impl PermissionManager {
     /// 从持久化存储加载权限配置并初始化管理器。
     pub fn new(workspace_root: impl AsRef<Path>) -> Result<Self> {
-        let ctx = get_active_session_context()
-            .ok_or_else(|| anyhow!("Active session context is not initialized"))?;
-        let store_path = project_session_permissions_path(&ctx.cwd, &ctx.session_id);
+        let cwd = runtime_store().cwd.clone();
+        let session_id = runtime_store().session_id.clone();
+        let store_path = project_session_permissions_path(&cwd, &session_id);
         let store = read_store(&store_path)?;
 
         let state = PermissionState {

@@ -1,4 +1,4 @@
-use minicode_config::get_runtime_config;
+use minicode_config::get_runtime_config_cached;
 use minicode_history::runtime_messages;
 use minicode_permissions::session_permissions;
 use minicode_types::PermissionSummaryItem;
@@ -16,35 +16,23 @@ pub(super) fn build_header_lines(args: &TuiAppArgs, state: &ScreenState) -> Vec<
         .into_iter()
         .filter(|task| task.status == "running")
         .count();
-    let runtime = get_runtime_config();
-    let model = runtime
-        .as_ref()
-        .map(|x| x.model.clone())
-        .unwrap_or_else(|| "(unconfigured)".to_string());
+    let runtime = get_runtime_config_cached().unwrap_or_default();
+    let model = runtime.model;
     let provider = runtime
-        .as_ref()
-        .map(|x| {
-            x.base_url
-                .trim_start_matches("https://")
-                .trim_start_matches("http://")
-                .split('/')
-                .next()
-                .unwrap_or("custom")
-                .to_string()
-        })
-        .unwrap_or_else(|| "offline".to_string());
-    let auth = runtime
-        .as_ref()
-        .map(|x| {
-            if x.auth_token.is_some() {
-                "auth_token"
-            } else if x.api_key.is_some() {
-                "api_key"
-            } else {
-                "none"
-            }
-        })
-        .unwrap_or("none");
+        .base_url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or("custom")
+        .to_string();
+    let auth = if runtime.auth_token.is_some() {
+        "auth_token"
+    } else if runtime.api_key.is_some() {
+        "api_key"
+    } else {
+        "none"
+    };
     let recent = state
         .recent_tools
         .iter()

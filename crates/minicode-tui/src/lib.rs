@@ -8,11 +8,8 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use minicode_config::get_runtime_config;
-use minicode_history::{
-    append_runtime_message, estimate_context_tokens, initial_messages, load_history_entries,
-    runtime_messages, session_id, session_start_time,
-};
+use minicode_config::{load_runtime_config, runtime_input_history_state, runtime_store};
+use minicode_history::{append_runtime_message, estimate_context_tokens, runtime_messages};
 use minicode_types::ChatMessage;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -27,7 +24,6 @@ use input::{
     char_len, get_visible_commands, history_down, history_up, insert_char_at, remove_char_at,
     remove_char_before, scroll_transcript_by, toggle_tool_details,
 };
-pub use minicode_history::{init_session_id, init_session_start_time};
 pub use minicode_permissions::init_session_permissions;
 use render::render_screen;
 use state::ScreenState;
@@ -68,13 +64,15 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // 使用预先准备好的数据（在 run() 函数中已经加载并处理过）
-    let initial_messages = initial_messages();
+    let initial_messages = runtime_messages();
+    let history = runtime_input_history_state();
+    let history = history.lock().map(|g| g.clone()).unwrap_or_default();
     let mut state = ScreenState {
-        history: load_history_entries(),
+        history,
         message_count: initial_messages.len(),
         context_tokens_estimate: estimate_context_tokens(&initial_messages),
-        session_id: session_id().clone(),
-        session_start_time: session_start_time(),
+        session_id: runtime_store().session_id.clone(),
+        session_start_time: runtime_store().session_started_at,
         turn_count: 0,
         ..ScreenState::default()
     };
@@ -329,14 +327,18 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     }
 
     // Save complete session
-    let duration_seconds = session_start_time().elapsed().unwrap_or_default().as_secs();
+    let duration_seconds = runtime_store()
+        .session_started_at
+        .elapsed()
+        .unwrap_or_default()
+        .as_secs();
 
     let metadata = minicode_history::SessionMetadata {
-        session_id: session_id().clone(),
+        session_id: runtime_store().session_id.clone(),
         created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         ended_at: Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
         duration_seconds,
-        model: get_runtime_config().as_ref().map(|r| r.model.clone()),
+        model: Some(load_runtime_config()?.model),
         cwd: args.cwd.to_string_lossy().to_string(),
         turn_count: state.turn_count,
         user_input_count: state.message_count,
@@ -345,7 +347,7 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
     };
 
     let session = minicode_history::SessionRecord {
-        session_id: session_id().clone(),
+        session_id: runtime_store().session_id.clone(),
         metadata,
         messages: runtime_messages(),
     };

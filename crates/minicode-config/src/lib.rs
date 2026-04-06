@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::sync::RwLock;
-
+mod runtime;
 use anyhow::{Result, anyhow};
+pub use runtime::*;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpServerConfig {
@@ -68,61 +66,6 @@ impl McpServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MiniCodeSettings {
-    pub env: Option<HashMap<String, serde_json::Value>>,
-    pub model: Option<String>,
-    #[serde(rename = "maxOutputTokens")]
-    pub max_output_tokens: Option<u32>,
-    #[serde(rename = "mcpServers")]
-    pub mcp_servers: Option<HashMap<String, McpServerConfig>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RuntimeConfig {
-    pub model: String,
-    pub base_url: String,
-    pub auth_token: Option<String>,
-    pub api_key: Option<String>,
-    pub max_output_tokens: Option<u32>,
-    pub mcp_servers: HashMap<String, McpServerConfig>,
-    pub source_summary: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ActiveSessionContext {
-    pub cwd: PathBuf,
-    pub session_id: String,
-}
-
-fn runtime_config_cell() -> &'static RwLock<Option<RuntimeConfig>> {
-    static CELL: OnceLock<RwLock<Option<RuntimeConfig>>> = OnceLock::new();
-    CELL.get_or_init(|| RwLock::new(None))
-}
-
-fn active_session_cell() -> &'static Mutex<Option<ActiveSessionContext>> {
-    static CELL: OnceLock<Mutex<Option<ActiveSessionContext>>> = OnceLock::new();
-    CELL.get_or_init(|| Mutex::new(None))
-}
-
-/// 设置当前进程内的活动会话上下文。
-pub fn set_active_session_context(cwd: impl AsRef<Path>, session_id: String) {
-    if let Ok(mut slot) = active_session_cell().try_lock() {
-        *slot = Some(ActiveSessionContext {
-            cwd: cwd.as_ref().into(),
-            session_id,
-        });
-    }
-}
-
-/// 获取当前进程内的活动会话上下文。
-pub fn get_active_session_context() -> Option<ActiveSessionContext> {
-    active_session_cell()
-        .try_lock()
-        .ok()
-        .and_then(|slot| slot.clone())
-}
-
 /// 返回 mini-code 配置目录 `~/.mini-code`。
 pub fn mini_code_dir() -> PathBuf {
     dirs::home_dir()
@@ -135,45 +78,41 @@ pub fn mini_code_settings_path() -> PathBuf {
     mini_code_dir().join("settings.json")
 }
 
-/// 返回历史记录文件路径。
-pub fn mini_code_history_path() -> PathBuf {
-    mini_code_dir().join("history.json")
-}
-
 /// 获取当前进程内缓存的运行时配置（若已初始化）。
 pub fn get_runtime_config() -> Option<RuntimeConfig> {
-    runtime_config_cell()
+    runtime_store()
+        .runtime_config
         .read()
         .ok()
-        .and_then(|slot| slot.clone())
+        .and_then(|g| g.clone())
 }
 
 /// 将运行时配置写入进程内缓存。
 pub fn set_runtime_config(config: RuntimeConfig) {
-    if let Ok(mut slot) = runtime_config_cell().write() {
-        *slot = Some(config);
+    if let Ok(mut guard) = runtime_store().runtime_config.write() {
+        *guard = Some(config);
     }
 }
 
+/// 非阻塞读取运行时配置缓存（用于同步渲染路径）。
+pub fn get_runtime_config_cached() -> Option<RuntimeConfig> {
+    runtime_store()
+        .runtime_config
+        .try_read()
+        .ok()
+        .and_then(|g| g.clone())
+}
+
 /// 返回权限存储文件路径。
-pub fn mini_code_permissions_path(cwd: impl AsRef<Path>) -> PathBuf {
-    get_active_session_context()
-        .filter(|ctx| ctx.cwd == cwd.as_ref())
-        .map(|ctx| ctx.session_id)
-        .map(|session_id| project_session_permissions_path(cwd, &session_id))
-        .unwrap_or("unknown".into())
+pub fn mini_code_permissions_path() -> PathBuf {
+    let cwd = &runtime_store().cwd;
+    let session_id = &runtime_store().session_id;
+    project_session_permissions_path(cwd, session_id)
 }
 
 /// 返回全局 MCP 配置文件路径。
 pub fn mini_code_mcp_path() -> PathBuf {
     mini_code_dir().join("mcp.json")
-}
-
-/// 返回兼容 Claude 配置路径。
-pub fn claude_settings_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claude/settings.json")
 }
 
 /// 返回项目级 MCP 配置路径。
@@ -201,9 +140,9 @@ pub fn project_session_metadata_path(cwd: impl AsRef<Path>, session_id: &str) ->
     project_session_dir(cwd, session_id).join("metadata.json")
 }
 
-/// 返回会话对话历史路径: .mini-code/sessions/{session_id}/conversation.json
+/// 返回会话对话历史路径: .mini-code/sessions/{session_id}/conversation.toml
 pub fn project_session_conversation_path(cwd: impl AsRef<Path>, session_id: &str) -> PathBuf {
-    project_session_dir(cwd, session_id).join("conversation.json")
+    project_session_dir(cwd, session_id).join("conversation.toml")
 }
 
 /// 返回会话权限文件路径: .mini-code/sessions/{session_id}/permissions.json
@@ -225,24 +164,6 @@ fn read_json_file<T: for<'de> Deserialize<'de> + Default>(path: impl AsRef<Path>
     }
 }
 
-/// 将 overlay 设置覆盖并合并到 base 设置中。
-fn merge_settings(base: MiniCodeSettings, overlay: MiniCodeSettings) -> MiniCodeSettings {
-    let mut env = base.env.unwrap_or_default();
-    env.extend(overlay.env.unwrap_or_default());
-
-    let mut mcp = base.mcp_servers.unwrap_or_default();
-    for (k, v) in overlay.mcp_servers.unwrap_or_default() {
-        mcp.insert(k, v);
-    }
-
-    MiniCodeSettings {
-        env: if env.is_empty() { None } else { Some(env) },
-        model: overlay.model.or(base.model),
-        max_output_tokens: overlay.max_output_tokens.or(base.max_output_tokens),
-        mcp_servers: if mcp.is_empty() { None } else { Some(mcp) },
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct McpConfigFile {
     #[serde(default, rename = "mcpServers")]
@@ -255,114 +176,80 @@ fn read_mcp_servers(path: impl AsRef<Path>) -> Result<HashMap<String, McpServerC
 }
 
 /// 按优先级加载并合并最终生效设置。
-pub fn load_effective_settings(cwd: impl AsRef<Path>) -> Result<MiniCodeSettings> {
-    let claude = read_json_file::<MiniCodeSettings>(&claude_settings_path())?;
-    let global_mcp = MiniCodeSettings {
-        mcp_servers: Some(read_mcp_servers(mini_code_mcp_path())?),
-        ..MiniCodeSettings::default()
-    };
-    let project_mcp = MiniCodeSettings {
-        mcp_servers: Some(read_mcp_servers(project_mcp_path(cwd))?),
-        ..MiniCodeSettings::default()
-    };
-    let mini = read_json_file::<MiniCodeSettings>(&mini_code_settings_path())?;
-
-    Ok(merge_settings(
-        merge_settings(merge_settings(claude, global_mcp), project_mcp),
-        mini,
-    ))
+pub fn config_from_file(cwd: impl AsRef<Path>) -> Result<RuntimeConfig> {
+    let global_mcp = read_mcp_servers(mini_code_mcp_path())?;
+    let project_mcp = read_mcp_servers(project_mcp_path(cwd))?;
+    let mut config = read_json_file::<RuntimeConfig>(&mini_code_settings_path())?;
+    config.mcp_servers = global_mcp.into_iter().chain(project_mcp).collect();
+    Ok(config)
 }
 
 /// 将更新内容合并后写回全局设置文件。
-pub fn save_minicode_settings(updates: MiniCodeSettings) -> Result<()> {
-    if let Some(model) = &updates.model
-        && let Some(mut guard) = runtime_config_cell().write().ok()
-        && let Some(runtime) = guard.as_mut()
-    {
-        runtime.model = model.to_string();
-    }
-    if let Some(max_output_tokens) = &updates.max_output_tokens
-        && let Some(mut guard) = runtime_config_cell().write().ok()
-        && let Some(runtime) = guard.as_mut()
-    {
-        runtime.max_output_tokens = Some(*max_output_tokens);
-    }
+pub fn save_minicode_settings(config: &RuntimeConfig) -> Result<()> {
     let path = mini_code_settings_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let existing = read_json_file::<MiniCodeSettings>(&path)?;
-    let merged = merge_settings(existing, updates);
-    fs::write(
-        path,
-        format!("{}\n", serde_json::to_string_pretty(&merged)?),
-    )?;
-
+    fs::write(path, format!("{}\n", serde_json::to_string_pretty(config)?))?;
     Ok(())
 }
 
 /// 从配置与环境变量构建运行时配置（不读写单例缓存）。
-fn build_runtime_config(cwd: impl AsRef<Path>) -> Result<RuntimeConfig> {
-    let effective = load_effective_settings(cwd)?;
-    let mut env = std::env::vars().collect::<HashMap<_, _>>();
-    if let Some(extra) = &effective.env {
-        for (k, v) in extra {
-            env.insert(k.clone(), v.to_string().trim_matches('"').to_string());
-        }
+fn build_runtime_config() -> Result<RuntimeConfig> {
+    let mut config = read_json_file::<RuntimeConfig>(mini_code_settings_path())?;
+    let env = std::env::vars().collect::<HashMap<_, _>>();
+
+    if let Some(model) = std::env::var("MINI_CODE_MODEL")
+        .ok()
+        .or_else(|| env.get("ANTHROPIC_MODEL").cloned())
+    {
+        config.model = model;
+    }
+    if let Some(base_url) = std::env::var("MINI_CODE_BASE_URL")
+        .ok()
+        .or_else(|| env.get("ANTHROPIC_BASE_URL").cloned())
+    {
+        config.base_url = base_url;
+    }
+    if let Some(max_token_window) = std::env::var("MINI_CODE_MAX_TOKEN_WINDOW")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+    {
+        config.max_token_window = Some(max_token_window);
+    }
+    if let Some(auth_token) = std::env::var("ANTHROPIC_AUTH_TOKEN")
+        .ok()
+        .or_else(|| env.get("ANTHROPIC_AUTH_TOKEN").cloned())
+    {
+        config.auth_token = Some(auth_token);
+    }
+    if let Some(api_key) = std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .or_else(|| env.get("ANTHROPIC_API_KEY").cloned())
+    {
+        config.api_key = Some(api_key);
     }
 
-    let model = std::env::var("MINI_CODE_MODEL")
-        .ok()
-        .or(effective.model)
-        .or_else(|| env.get("ANTHROPIC_MODEL").cloned())
-        .unwrap_or_default();
-
-    let base_url = env
-        .get("ANTHROPIC_BASE_URL")
-        .cloned()
-        .unwrap_or_else(|| "https://api.anthropic.com".to_string());
-
-    let auth_token = env
-        .get("ANTHROPIC_AUTH_TOKEN")
-        .cloned()
-        .filter(|x| !x.is_empty());
-    let api_key = env
-        .get("ANTHROPIC_API_KEY")
-        .cloned()
-        .filter(|x| !x.is_empty());
-
-    if model.trim().is_empty() {
+    if config.model.trim().is_empty() {
         return Err(anyhow!(
             "No model configured. Set ~/.mini-code/settings.json or ANTHROPIC_MODEL."
         ));
     }
-    if auth_token.is_none() && api_key.is_none() {
+    if config.auth_token.is_none() && config.api_key.is_none() {
         return Err(anyhow!(
             "No auth configured. Set ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY."
         ));
     }
 
-    Ok(RuntimeConfig {
-        model,
-        base_url,
-        auth_token,
-        api_key,
-        max_output_tokens: effective.max_output_tokens,
-        mcp_servers: effective.mcp_servers.unwrap_or_default(),
-        source_summary: format!(
-            "config: {} > {} > process.env",
-            mini_code_settings_path().display(),
-            claude_settings_path().display()
-        ),
-    })
+    Ok(config)
 }
 
 /// 读取运行时配置：首次加载后缓存为进程级单例，后续直接返回缓存。
-pub fn load_runtime_config(cwd: impl AsRef<Path>) -> Result<RuntimeConfig> {
+pub fn load_runtime_config() -> Result<RuntimeConfig> {
     if let Some(cached) = get_runtime_config() {
         return Ok(cached);
     }
-    let runtime = build_runtime_config(cwd)?;
+    let runtime = build_runtime_config()?;
     set_runtime_config(runtime.clone());
     Ok(runtime)
 }

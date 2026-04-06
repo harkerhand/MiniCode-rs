@@ -7,8 +7,14 @@ use minicode_config::{
     project_sessions_index,
 };
 use minicode_types::ChatMessage;
+use serde::{Deserialize, Serialize};
 
 use crate::{SessionIndex, SessionIndexEntry, SessionMetadata, SessionRecord};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ConversationFile {
+    messages: Vec<ChatMessage>,
+}
 
 /// 把完整的会话记录保存到磁盘上，供后续恢复使用
 pub fn save_session(cwd: impl AsRef<Path>, session: &SessionRecord) -> Result<()> {
@@ -32,12 +38,10 @@ pub fn save_session(cwd: impl AsRef<Path>, session: &SessionRecord) -> Result<()
     )?;
 
     let conv_path = project_session_conversation_path(cwd.as_ref(), &session.session_id);
-    let conversation = serde_json::json!({
-        "messages": messages,
-    });
+    let conversation = ConversationFile { messages };
     fs::write(
         conv_path,
-        format!("{}\n", serde_json::to_string_pretty(&conversation)?),
+        format!("{}\n", toml::to_string_pretty(&conversation)?),
     )?;
 
     update_session_index(cwd.as_ref(), &session.metadata)?;
@@ -112,8 +116,7 @@ pub fn load_session(cwd: impl AsRef<Path>, session_id: &str) -> Result<SessionRe
     let conv_path = project_session_conversation_path(cwd.as_ref(), session_id);
     let messages: Vec<ChatMessage> = if conv_path.exists() {
         let content = fs::read_to_string(conv_path)?;
-        let data: serde_json::Value = serde_json::from_str(&content)?;
-        serde_json::from_value(data.get("messages").cloned().unwrap_or_default())?
+        toml::from_str::<ConversationFile>(&content)?.messages
     } else {
         vec![]
     };

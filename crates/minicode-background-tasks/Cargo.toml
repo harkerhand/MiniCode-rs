@@ -8,7 +8,6 @@ authors.workspace = true
 
 [dependencies]
 minicode-tool = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [lints]
