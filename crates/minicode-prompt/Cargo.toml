@@ -8,9 +8,9 @@ authors.workspace = true
 
 [dependencies]
 dirs = { workspace = true }
-minicode-types = { workspace = true }
 minicode-config = { workspace = true }
 minicode-permissions = { workspace = true }
+minicode-tool = { workspace = true }
 
 [lints]
 workspace = true

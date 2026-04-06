@@ -5,7 +5,6 @@ use crate::web::extract_between;
 use crate::web::strip_tags;
 use anyhow::Result;
 use async_trait::async_trait;
-use minicode_tool::ToolContext;
 use minicode_tool::ToolResult;
 use serde::Deserialize;
 use serde_json::Value;
@@ -40,7 +39,7 @@ impl Tool for WebFetchTool {
         })
     }
 
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let parsed: WebFetchInput = match serde_json::from_value(input) {
             Ok(v) => v,
             Err(err) => return ToolResult::err(err.to_string()),

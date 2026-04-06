@@ -4,7 +4,7 @@ use anyhow::Result;
 use minicode_config::runtime_config;
 use minicode_mcp::{create_mcp_backed_tools, set_mcp_logging_enabled};
 use minicode_skills::discover_skills;
-use minicode_tool::{Tool, ToolContext, ToolRegistry};
+use minicode_tool::{Tool, ToolRegistry};
 mod act;
 mod command;
 mod file;

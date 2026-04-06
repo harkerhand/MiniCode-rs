@@ -41,7 +41,7 @@ impl Tool for MyTool {
         })
     }
     
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value, ) -> ToolResult {
         // TODO: Implement tool logic
         ToolResult::ok("output")
     }
@@ -157,7 +157,7 @@ match std::fs::read_to_string(&file) {
 
 ### 权限检查错误
 ```rust
-let target = match resolve_tool_path(context, path, "read").await {
+let target = match resolve_tool_path( path, "read").await {
     Ok(p) => p,
     Err(err) => return ToolResult::err(err.to_string()),
 };
@@ -352,7 +352,7 @@ if let Some(perms) = &context.permissions {
 ### 路径解析
 ```rust
 // 自动处理权限检查和安全性
-let target = resolve_tool_path(context, path, "read").await?;
+let target = resolve_tool_path( path, "read").await?;
 ```
 
 ---

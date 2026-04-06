@@ -1,4 +1,3 @@
-use crate::ToolContext;
 use crate::resolve_tool_path;
 use async_trait::async_trait;
 use minicode_tool::Tool;
@@ -22,9 +21,9 @@ impl Tool for ListFilesTool {
         json!({"type":"object","properties":{"path":{"type":"string"}}})
     }
     /// 列出目标目录中的文件和子目录。
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let path = input.get("path").and_then(|x| x.as_str()).unwrap_or(".");
-        let target = match resolve_tool_path(context, path, "list").await {
+        let target = match resolve_tool_path(path, "list").await {
             Ok(p) => p,
             Err(err) => return ToolResult::err(err.to_string()),
         };

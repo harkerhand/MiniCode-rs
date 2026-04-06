@@ -1,10 +1,11 @@
 use std::process::Stdio;
 
-use crate::ToolContext;
 use crate::resolve_tool_path;
 use async_trait::async_trait;
 use minicode_background_tasks::register_background_shell_task;
+use minicode_config::runtime_store;
 use minicode_permissions::EnsureCommandOptions;
+use minicode_permissions::get_permission_manager;
 use minicode_tool::Tool;
 use minicode_tool::ToolResult;
 use serde::Deserialize;
@@ -42,19 +43,19 @@ impl Tool for RunCommandTool {
         json!({"type":"object","properties":{"command":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"}},"required":["command"]})
     }
     /// 执行本地命令，支持权限审批和后台运行。
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let parsed: RunCommandInput = match serde_json::from_value(input) {
             Ok(v) => v,
             Err(err) => return ToolResult::err(err.to_string()),
         };
 
         let effective_cwd = if let Some(cwd) = parsed.cwd.as_deref() {
-            match resolve_tool_path(context, cwd, "list").await {
+            match resolve_tool_path(cwd, "list").await {
                 Ok(v) => v,
                 Err(err) => return ToolResult::err(err.to_string()),
             }
         } else {
-            std::path::PathBuf::from(&context.cwd)
+            runtime_store().cwd.clone()
         };
 
         let normalized = normalize_command_input(&parsed);
@@ -82,37 +83,36 @@ impl Tool for RunCommandTool {
             normalized.args.clone()
         };
 
-        if let Some(perms) = &context.permissions {
-            let approval = if !use_shell && !known_command {
-                perms
-                    .ensure_command(
-                        &exec,
-                        &exec_args,
-                        effective_cwd.to_string_lossy().as_ref(),
-                        Some(EnsureCommandOptions {
-                            force_prompt_reason: Some(format!(
-                                "Unknown command '{}' is not in the built-in read-only/development set",
-                                normalized.command
-                            )),
-                        }),
-                    )
-                    .await
-            } else if use_shell || !is_read_only_command(&normalized.command) {
-                perms
-                    .ensure_command(
-                        &exec,
-                        &exec_args,
-                        effective_cwd.to_string_lossy().as_ref(),
-                        None,
-                    )
-                    .await
-            } else {
-                Ok(())
-            };
+        let permission_manager = get_permission_manager();
+        let approval = if !use_shell && !known_command {
+            permission_manager
+                .ensure_command(
+                    &exec,
+                    &exec_args,
+                    effective_cwd.to_string_lossy().as_ref(),
+                    Some(EnsureCommandOptions {
+                        force_prompt_reason: Some(format!(
+                            "Unknown command '{}' is not in the built-in read-only/development set",
+                            normalized.command
+                        )),
+                    }),
+                )
+                .await
+        } else if use_shell || !is_read_only_command(&normalized.command) {
+            permission_manager
+                .ensure_command(
+                    &exec,
+                    &exec_args,
+                    effective_cwd.to_string_lossy().as_ref(),
+                    None,
+                )
+                .await
+        } else {
+            Ok(())
+        };
 
-            if let Err(err) = approval {
-                return ToolResult::err(err.to_string());
-            }
+        if let Err(err) = approval {
+            return ToolResult::err(err.to_string());
         }
 
         if use_shell && background {

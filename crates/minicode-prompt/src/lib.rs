@@ -2,7 +2,7 @@ use std::path::Path;
 
 use minicode_config::runtime_store;
 use minicode_permissions::get_permission_manager;
-use minicode_types::{McpServerSummary, SkillSummary};
+use minicode_tool::get_tool_registry;
 
 /// 尝试读取文件内容，失败时返回 `None`。
 fn maybe_read(path: impl AsRef<Path>) -> Option<String> {
@@ -10,9 +10,11 @@ fn maybe_read(path: impl AsRef<Path>) -> Option<String> {
 }
 
 /// 组合运行上下文、权限、技能和 MCP 信息，生成系统提示词。
-pub fn build_system_prompt(skills: &[SkillSummary], mcp_servers: &[McpServerSummary]) -> String {
+pub fn build_system_prompt() -> String {
     let cwd = runtime_store().cwd.clone();
     let permission_summary = get_permission_manager().get_summary_text();
+    let skills = get_tool_registry().get_skills();
+    let mcp_servers = get_tool_registry().get_mcp_servers();
 
     let mut lines = vec![
         "You are mini-code, a terminal coding assistant.".to_string(),

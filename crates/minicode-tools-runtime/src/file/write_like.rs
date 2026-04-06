@@ -1,4 +1,3 @@
-use crate::ToolContext;
 use crate::file::apply_reviewed_file_change;
 use crate::resolve_tool_path;
 use async_trait::async_trait;
@@ -27,19 +26,19 @@ impl Tool for WriteLikeTool {
         json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]})
     }
     /// 写入或整体替换文件内容（带权限审阅）。
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let path = input.get("path").and_then(|x| x.as_str()).unwrap_or("");
         let content = input.get("content").and_then(|x| x.as_str()).unwrap_or("");
         if path.is_empty() {
             return ToolResult::err("path is required");
         }
 
-        let target = match resolve_tool_path(context, path, "write").await {
+        let target = match resolve_tool_path(path, "write").await {
             Ok(v) => v,
             Err(err) => return ToolResult::err(err.to_string()),
         };
 
-        match apply_reviewed_file_change(context, path, &target, content).await {
+        match apply_reviewed_file_change(path, &target, content).await {
             Ok(v) => v,
             Err(err) => ToolResult::err(err.to_string()),
         }

@@ -1,6 +1,6 @@
-use crate::ToolContext;
 use crate::resolve_tool_path;
 use async_trait::async_trait;
+use minicode_config::runtime_store;
 use minicode_tool::Tool;
 use minicode_tool::ToolResult;
 use serde::Deserialize;
@@ -30,14 +30,14 @@ impl Tool for GrepFilesTool {
         json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]})
     }
     /// 使用 `rg` 搜索文本并返回匹配结果。
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let parsed: GrepInput = match serde_json::from_value(input) {
             Ok(v) => v,
             Err(err) => return ToolResult::err(err.to_string()),
         };
         let mut args = vec!["-n".to_string(), "--no-heading".to_string(), parsed.pattern];
         if let Some(path) = parsed.path {
-            let p = match resolve_tool_path(context, &path, "search").await {
+            let p = match resolve_tool_path(&path, "search").await {
                 Ok(v) => v,
                 Err(err) => return ToolResult::err(err.to_string()),
             };
@@ -48,7 +48,7 @@ impl Tool for GrepFilesTool {
 
         match Command::new("rg")
             .args(args)
-            .current_dir(&context.cwd)
+            .current_dir(runtime_store().cwd.clone())
             .output()
             .await
         {

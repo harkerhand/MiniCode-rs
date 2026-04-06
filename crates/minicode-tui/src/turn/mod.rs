@@ -1,19 +1,16 @@
 use std::io::Stdout;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{self};
 use minicode_agent_core::run_agent_turn;
 use minicode_cli_commands::{find_matching_slash_commands, try_handle_local_command};
-use minicode_config::runtime_store;
 use minicode_history::{
     add_history_entry, append_runtime_message, estimate_context_tokens, load_history_entries,
     runtime_messages,
 };
 use minicode_permissions::get_permission_manager;
-use minicode_prompt::build_system_prompt;
-use minicode_tool::{ToolContext, get_tool_registry, parse_local_tool_shortcut};
+use minicode_tool::{get_tool_registry, parse_local_tool_shortcut};
 use minicode_types::{ChatMessage, get_model_adapter};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -38,7 +35,7 @@ pub(crate) async fn handle_submit(
     state: &mut ScreenState,
     raw_input: String,
 ) -> Result<bool> {
-    let permissions = get_permission_manager();
+    let permission_manager = get_permission_manager();
     let input = raw_input.trim().to_string();
     if input.is_empty() {
         return Ok(false);
@@ -74,9 +71,7 @@ pub(crate) async fn handle_submit(
         state.is_busy = true;
         state.status = Some(format!("Running {}...", shortcut.tool_name));
         let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
-        let task_permissions = permissions.clone();
-        task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
-        let cwd = runtime_store().cwd.clone();
+        permission_manager.set_prompt_handler(build_prompt_handler(tx.clone()));
         let payload = shortcut.input;
         let tool_name_owned = shortcut.tool_name.to_string();
 
@@ -85,16 +80,7 @@ pub(crate) async fn handle_submit(
                 tool_name: tool_name_owned.clone(),
                 input: payload.clone(),
             });
-            let result = get_tool_registry()
-                .execute(
-                    &tool_name_owned,
-                    payload,
-                    &ToolContext {
-                        cwd,
-                        permissions: Some(Arc::new(task_permissions)),
-                    },
-                )
-                .await;
+            let result = get_tool_registry().execute(&tool_name_owned, payload).await;
             let _ = tx.send(TurnEvent::ToolDone(result));
         });
 
@@ -136,47 +122,23 @@ pub(crate) async fn handle_submit(
         return Ok(false);
     }
 
-    let skills = get_tool_registry().get_skills();
-    let mcp_servers = get_tool_registry().get_mcp_servers();
-
     append_runtime_message(ChatMessage::User {
         content: input.clone(),
     });
-    let next_messages = runtime_messages();
+    let messages = runtime_messages();
+    state.context_tokens_estimate = estimate_context_tokens(&messages);
 
-    let mut current_messages = Vec::with_capacity(next_messages.len() + 1);
-    current_messages.push(ChatMessage::System {
-        content: build_system_prompt(&skills, &mcp_servers),
-    });
-    current_messages.extend(next_messages.clone());
-
-    state.context_tokens_estimate = estimate_context_tokens(&current_messages);
-
-    permissions.begin_turn();
+    permission_manager.begin_turn();
     state.status = Some("Thinking...".to_string());
     state.is_busy = true;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
-    let task_permissions = permissions.clone();
-    task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
+    permission_manager.set_prompt_handler(build_prompt_handler(tx.clone()));
     let model = get_model_adapter();
-    let current_messages = current_messages;
-    let cwd = runtime_store().cwd.clone();
 
     tokio::spawn(async move {
         let mut callbacks = ChannelCallbacks { tx: tx.clone() };
-        let new_messages = run_agent_turn(
-            model.as_ref(),
-            current_messages,
-            ToolContext {
-                cwd,
-                permissions: Some(Arc::new(task_permissions)),
-            },
-            None,
-            Some(&mut callbacks),
-        )
-        .await;
-        new_messages.into_iter().for_each(append_runtime_message);
+        run_agent_turn(model.as_ref(), None, Some(&mut callbacks)).await;
         let _ = tx.send(TurnEvent::Done);
     });
 
@@ -199,7 +161,7 @@ pub(crate) async fn handle_submit(
 
     let done = runtime_messages();
     state.context_tokens_estimate = estimate_context_tokens(&done);
-    permissions.end_turn();
+    permission_manager.end_turn();
     state.is_busy = false;
     state.status = None;
     state.active_tool = None;

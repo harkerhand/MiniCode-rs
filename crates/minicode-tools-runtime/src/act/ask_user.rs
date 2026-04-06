@@ -1,4 +1,3 @@
-use crate::ToolContext;
 use async_trait::async_trait;
 use minicode_tool::Tool;
 use minicode_tool::ToolResult;
@@ -22,7 +21,7 @@ impl Tool for AskUserTool {
         json!({"type":"object","properties":{"question":{"type":"string"}},"required":["question"]})
     }
     /// 透传问题并要求当前轮等待用户回复。
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let question = input
             .get("question")
             .and_then(|x| x.as_str())

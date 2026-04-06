@@ -14,7 +14,7 @@ impl Tool for AskUserTool {
     fn input_schema(&self) -> Value {
         json!({"type":"object","properties":{"question":{"type":"string"}},"required":["question"]})
     }
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let question = input
             .get("question")
             .and_then(|x| x.as_str())
@@ -55,7 +55,7 @@ impl Tool for ReadFileTool {
             "limit":{"type":"number"}
         },"required":["path"]})
     }
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value, ) -> ToolResult {
         let path = input.get("path").and_then(|x| x.as_str()).unwrap_or("");
         if path.is_empty() {
             return ToolResult::err("path is required");
@@ -68,7 +68,7 @@ impl Tool for ReadFileTool {
             .min(20_000) as usize;
         
         // 权限检查和路径解析
-        let target = match resolve_tool_path(context, path, "read").await {
+        let target = match resolve_tool_path( path, "read").await {
             Ok(p) => p,
             Err(err) => return ToolResult::err(err.to_string()),
         };
@@ -254,7 +254,7 @@ impl Tool for McpDynamicTool {
     fn description(&self) -> &str { &self.description }
     fn input_schema(&self) -> Value { self.input_schema.clone() }
     
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let mut client = self.client.lock().await;  // 获取互斥锁
         match client.call_tool(&self.tool_name, input) {
             Ok(result) => result,
@@ -294,7 +294,7 @@ pub async fn execute(
     &self,
     tool_name: &str,
     input: Value,
-    context: &ToolContext,
+    ,
 ) -> ToolResult {
     // 第 1 步：获取读锁
     let state = self.state.read().await;
@@ -370,7 +370,7 @@ if path.is_empty() {
 
 ### 模式 2: 权限或解析错误
 ```rust
-let target = match resolve_tool_path(context, path, "read").await {
+let target = match resolve_tool_path( path, "read").await {
     Ok(p) => p,
     Err(err) => return ToolResult::err(err.to_string()),
 };

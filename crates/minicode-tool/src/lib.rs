@@ -68,7 +68,7 @@ pub trait Tool: Send + Sync {
     /// 返回工具输入 JSON Schema。
     fn input_schema(&self) -> Value;
     /// 执行工具逻辑。
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult;
+    async fn run(&self, input: Value) -> ToolResult;
 }
 
 enum InputValidator {
@@ -233,12 +233,7 @@ impl ToolRegistry {
     }
 
     /// 执行指定工具并返回结果。
-    pub async fn execute(
-        &self,
-        tool_name: &str,
-        input: Value,
-        context: &ToolContext,
-    ) -> ToolResult {
+    pub async fn execute(&self, tool_name: &str, input: Value) -> ToolResult {
         let state = self.state.read().await;
         let Some(idx) = state.index.get(tool_name) else {
             return ToolResult::err(format!("Unknown tool: {tool_name}"));
@@ -251,7 +246,7 @@ impl ToolRegistry {
             return ToolResult::err(err);
         }
 
-        tool.run(input, context).await
+        tool.run(input).await
     }
 
     /// 释放注册表持有的外部资源。

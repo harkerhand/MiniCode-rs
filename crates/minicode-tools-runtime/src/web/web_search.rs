@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use minicode_tool::{Tool, ToolContext, ToolResult};
+use minicode_tool::{Tool, ToolResult};
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -44,7 +44,7 @@ impl Tool for WebSearchTool {
         })
     }
 
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let parsed: WebSearchInput = match serde_json::from_value(input) {
             Ok(v) => v,
             Err(err) => return ToolResult::err(err.to_string()),

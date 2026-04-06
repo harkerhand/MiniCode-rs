@@ -1,4 +1,3 @@
-use crate::ToolContext;
 use crate::file::apply_reviewed_file_change;
 use crate::resolve_tool_path;
 use async_trait::async_trait;
@@ -24,7 +23,7 @@ impl Tool for EditFileTool {
         json!({"type":"object","properties":{"path":{"type":"string"},"search":{"type":"string"},"replace":{"type":"string"},"replaceAll":{"type":"boolean"}},"required":["path","search","replace"]})
     }
     /// 执行单次或全量字符串替换编辑。
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let path = input.get("path").and_then(|x| x.as_str()).unwrap_or("");
         let search = input.get("search").and_then(|x| x.as_str()).unwrap_or("");
         let replace = input.get("replace").and_then(|x| x.as_str()).unwrap_or("");
@@ -36,7 +35,7 @@ impl Tool for EditFileTool {
             return ToolResult::err("path/search is required");
         }
 
-        let target = match resolve_tool_path(context, path, "write").await {
+        let target = match resolve_tool_path(path, "write").await {
             Ok(v) => v,
             Err(err) => return ToolResult::err(err.to_string()),
         };
@@ -55,7 +54,7 @@ impl Tool for EditFileTool {
             original.replacen(search, replace, 1)
         };
 
-        match apply_reviewed_file_change(context, path, &target, &next).await {
+        match apply_reviewed_file_change(path, &target, &next).await {
             Ok(v) => v,
             Err(err) => ToolResult::err(err.to_string()),
         }

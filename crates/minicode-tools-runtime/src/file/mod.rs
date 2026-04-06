@@ -7,6 +7,8 @@ mod write_like;
 pub use edit_file::*;
 pub use grep_file::*;
 pub use list_file::*;
+use minicode_config::runtime_store;
+use minicode_permissions::get_permission_manager;
 pub use patch_file::*;
 pub use read_file::*;
 pub use write_like::*;
@@ -14,8 +16,8 @@ pub use write_like::*;
 use std::path::Path;
 use std::{fs, path::PathBuf};
 
-use anyhow::{Result, anyhow};
-use minicode_tool::{ToolContext, ToolResult};
+use anyhow::Result;
+use minicode_tool::ToolResult;
 use similar::TextDiff;
 
 /// 生成统一 diff 文本，用于预览文件改动。
@@ -41,7 +43,6 @@ pub fn load_existing_file(target_path: impl AsRef<Path>) -> Result<String> {
 
 /// 在通过权限审阅后将文件改动写入磁盘。
 pub async fn apply_reviewed_file_change(
-    context: &ToolContext,
     file_path: &str,
     target_path: impl AsRef<Path>,
     next_content: &str,
@@ -52,11 +53,10 @@ pub async fn apply_reviewed_file_change(
     }
 
     let diff = build_unified_diff(file_path, &previous, next_content);
-    if let Some(permissions) = &context.permissions {
-        permissions
-            .ensure_edit(target_path.as_ref().to_string_lossy().as_ref(), &diff)
-            .await?;
-    }
+    let permission_manager = get_permission_manager();
+    permission_manager
+        .ensure_edit(target_path.as_ref().to_string_lossy().as_ref(), &diff)
+        .await?;
 
     if let Some(parent) = target_path.as_ref().parent() {
         fs::create_dir_all(parent)?;
@@ -69,47 +69,18 @@ pub async fn apply_reviewed_file_change(
 }
 
 /// 基于工具上下文解析目标路径，并执行权限校验。
-pub async fn resolve_tool_path(
-    context: &ToolContext,
-    target_path: &str,
-    intent: &str,
-) -> Result<PathBuf> {
-    let base = PathBuf::from(&context.cwd);
+pub async fn resolve_tool_path(target_path: &str, intent: &str) -> Result<PathBuf> {
+    let cwd = runtime_store().cwd.clone();
+    let base = PathBuf::from(&cwd);
     let resolved = base
         .join(target_path)
         .canonicalize()
         .unwrap_or_else(|_| base.join(target_path));
 
-    if context.permissions.is_none() {
-        ensure_inside_workspace(&base, &resolved)?;
-        return Ok(resolved);
-    }
-
-    if let Some(permissions) = &context.permissions {
-        permissions
-            .ensure_path_access(resolved.to_string_lossy().as_ref(), intent)
-            .await?;
-    }
+    let permission_manager = get_permission_manager();
+    permission_manager
+        .ensure_path_access(resolved.to_string_lossy().as_ref(), intent)
+        .await?;
 
     Ok(resolved)
-}
-
-/// 确保路径没有逃逸出当前工作区目录。
-fn ensure_inside_workspace(root: impl AsRef<Path>, resolved: impl AsRef<Path>) -> Result<()> {
-    let Ok(relative) = resolved.as_ref().strip_prefix(root.as_ref()) else {
-        return Err(anyhow!(
-            "Path escapes workspace: {}",
-            resolved.as_ref().display()
-        ));
-    };
-    if relative
-        .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err(anyhow!(
-            "Path escapes workspace: {}",
-            resolved.as_ref().display()
-        ));
-    }
-    Ok(())
 }

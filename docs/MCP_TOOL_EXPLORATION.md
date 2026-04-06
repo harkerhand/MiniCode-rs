@@ -38,7 +38,7 @@ pub trait Tool: Send + Sync {
     fn input_schema(&self) -> Value;
     
     /// 执行工具逻辑 (async)
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult;
+    async fn run(&self, input: Value, ) -> ToolResult;
 }
 ```
 
@@ -176,7 +176,7 @@ pub async fn execute(
     &self,
     tool_name: &str,
     input: Value,
-    context: &ToolContext,
+    ,
 ) -> ToolResult {
     // 1. 查找工具
     let Some(idx) = state.index.get(tool_name) else {
@@ -225,7 +225,7 @@ impl Tool for AskUserTool {
     fn input_schema(&self) -> Value {
         json!({"type":"object","properties":{"question":{"type":"string"}},"required":["question"]})
     }
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let question = input.get("question").and_then(|x| x.as_str()).unwrap_or("请补充信息").to_string();
         ToolResult {
             ok: true,
@@ -249,9 +249,9 @@ impl Tool for ListFilesTool {
     fn input_schema(&self) -> Value {
         json!({"type":"object","properties":{"path":{"type":"string"}}})
     }
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value, ) -> ToolResult {
         let path = input.get("path").and_then(|x| x.as_str()).unwrap_or(".");
-        let target = match resolve_tool_path(context, path, "list").await {
+        let target = match resolve_tool_path( path, "list").await {
             Ok(p) => p,
             Err(err) => return ToolResult::err(err.to_string()),
         };
@@ -281,14 +281,14 @@ impl Tool for EditFileTool {
             "replaceAll":{"type":"boolean"}
         },"required":["path","search","replace"]})
     }
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value, ) -> ToolResult {
         let path = input.get("path").and_then(|x| x.as_str()).unwrap_or("");
         let search = input.get("search").and_then(|x| x.as_str()).unwrap_or("");
         let replace = input.get("replace").and_then(|x| x.as_str()).unwrap_or("");
         let replace_all = input.get("replaceAll").and_then(|x| x.as_bool()).unwrap_or(false);
         
         // 权限审核、读取、替换、写回...
-        apply_reviewed_file_change(context, path, &target, &next).await
+        apply_reviewed_file_change( path, &target, &next).await
     }
 }
 ```
@@ -313,7 +313,7 @@ impl Tool for McpDynamicTool {
     fn description(&self) -> &str { &self.description }
     fn input_schema(&self) -> Value { self.input_schema.clone() }
     
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let mut client = self.client.lock().await;
         match client.call_tool(&self.tool_name, input) {
             Ok(result) => result,
@@ -478,7 +478,7 @@ impl Tool for MyTool {
         })
     }
     
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value, ) -> ToolResult {
         // 解析输入
         let param1 = input.get("param1").and_then(|x| x.as_str()).unwrap_or("");
         
@@ -527,8 +527,8 @@ if let Some(err) = validation_error {
 ### 运行时错误
 ```rust
 // 工具内部处理
-async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
-    match resolve_tool_path(context, path, "read").await {
+async fn run(&self, input: Value, ) -> ToolResult {
+    match resolve_tool_path( path, "read").await {
         Ok(p) => p,
         Err(err) => return ToolResult::err(err.to_string()),  // 转换为 ToolResult 错误
     };

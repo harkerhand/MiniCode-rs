@@ -1,4 +1,3 @@
-use crate::ToolContext;
 use crate::file::apply_reviewed_file_change;
 use crate::resolve_tool_path;
 use async_trait::async_trait;
@@ -32,7 +31,7 @@ impl Tool for PatchFileTool {
         json!({"type":"object","properties":{"path":{"type":"string"},"replacements":{"type":"array","items":{"type":"object","properties":{"search":{"type":"string"},"replace":{"type":"string"},"replaceAll":{"type":"boolean"}},"required":["search","replace"]}}},"required":["path","replacements"]})
     }
     /// 依次应用多组查找替换规则。
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let path = input.get("path").and_then(|x| x.as_str()).unwrap_or("");
         let replacements: Vec<Replacement> = match input.get("replacements").cloned() {
             Some(v) => serde_json::from_value(v).unwrap_or_default(),
@@ -42,7 +41,7 @@ impl Tool for PatchFileTool {
             return ToolResult::err("path/replacements is required");
         }
 
-        let target = match resolve_tool_path(context, path, "write").await {
+        let target = match resolve_tool_path(path, "write").await {
             Ok(v) => v,
             Err(err) => return ToolResult::err(err.to_string()),
         };
@@ -63,7 +62,7 @@ impl Tool for PatchFileTool {
             }
         }
 
-        match apply_reviewed_file_change(context, path, &target, &content).await {
+        match apply_reviewed_file_change(path, &target, &content).await {
             Ok(v) => v,
             Err(err) => ToolResult::err(err.to_string()),
         }

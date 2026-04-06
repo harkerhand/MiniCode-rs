@@ -1,4 +1,3 @@
-use crate::ToolContext;
 use async_trait::async_trait;
 use minicode_config::runtime_store;
 use minicode_skills::load_skill;
@@ -24,7 +23,7 @@ impl Tool for LoadSkillTool {
         json!({"type":"object","properties":{"name":{"type":"string"}},"required":["name"]})
     }
     /// 读取指定技能的 SKILL.md 内容。
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let name = input.get("name").and_then(|x| x.as_str()).unwrap_or("");
         if name.is_empty() {
             return ToolResult::err("name is required");

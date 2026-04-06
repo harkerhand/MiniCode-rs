@@ -1,4 +1,3 @@
-use crate::ToolContext;
 use crate::resolve_tool_path;
 use async_trait::async_trait;
 use minicode_tool::Tool;
@@ -22,7 +21,7 @@ impl Tool for ReadFileTool {
         json!({"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"number"},"limit":{"type":"number"}},"required":["path"]})
     }
     /// 分块读取 UTF-8 文件并带上截断头信息。
-    async fn run(&self, input: Value, context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let path = input.get("path").and_then(|x| x.as_str()).unwrap_or("");
         if path.is_empty() {
             return ToolResult::err("path is required");
@@ -34,7 +33,7 @@ impl Tool for ReadFileTool {
             .unwrap_or(8000)
             .min(20_000) as usize;
 
-        let target = match resolve_tool_path(context, path, "read").await {
+        let target = match resolve_tool_path(path, "read").await {
             Ok(p) => p,
             Err(err) => return ToolResult::err(err.to_string()),
         };

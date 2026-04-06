@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use minicode_tool::{Tool, ToolContext, ToolResult};
+use minicode_tool::{Tool, ToolResult};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -167,7 +167,7 @@ impl Tool for McpDynamicTool {
         self.input_schema.clone()
     }
 
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let client = self.client.lock().await;
         match client.call_tool(&self.tool_name, input).await {
             Ok(result) => result,
@@ -194,7 +194,7 @@ impl Tool for ListMcpResourcesTool {
         json!({"type":"object","properties":{"server":{"type":"string"}}})
     }
 
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let server_filter = input.get("server").and_then(|v| v.as_str());
         let lines = self
             .entries
@@ -248,7 +248,7 @@ impl Tool for ReadMcpResourceTool {
         json!({"type":"object","properties":{"server":{"type":"string"},"uri":{"type":"string"}},"required":["server","uri"]})
     }
 
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let server = input
             .get("server")
             .and_then(|v| v.as_str())
@@ -289,7 +289,7 @@ impl Tool for ListMcpPromptsTool {
         json!({"type":"object","properties":{"server":{"type":"string"}}})
     }
 
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let server_filter = input.get("server").and_then(|v| v.as_str());
         let lines = self
             .entries
@@ -358,7 +358,7 @@ impl Tool for GetMcpPromptTool {
         json!({"type":"object","properties":{"server":{"type":"string"},"name":{"type":"string"},"arguments":{"type":"object","additionalProperties":{"type":"string"}}},"required":["server","name"]})
     }
 
-    async fn run(&self, input: Value, _context: &ToolContext) -> ToolResult {
+    async fn run(&self, input: Value) -> ToolResult {
         let server = input
             .get("server")
             .and_then(|v| v.as_str())
