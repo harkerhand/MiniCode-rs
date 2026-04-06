@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 
@@ -62,30 +62,28 @@ async fn run() -> Result<()> {
     }
 
     // 初始化运行时环境
-    let tools = Arc::new(create_default_tool_registry(&cwd).await?);
-    launch_tui_app(&cwd, tools).await
+    let tools = create_default_tool_registry().await?;
+    init_tool_registry(tools)?;
+    launch_tui_app().await
 }
 
 /// 启动 TUI 应用的通用函数
-async fn launch_tui_app(cwd: impl AsRef<Path>, tools: Arc<ToolRegistry>) -> Result<()> {
+async fn launch_tui_app() -> Result<()> {
     verify_interactive_terminal()?;
 
     let model: Arc<dyn ModelAdapter> = if is_mock_mode() {
         Arc::new(MockModelAdapter)
     } else {
-        Arc::new(AnthropicModelAdapter::new(tools.clone()))
+        Arc::new(AnthropicModelAdapter::default())
     };
+    let _ = set_model_adapter(model);
 
+    let tools = get_tool_registry();
     let mcp_servers = tools.get_mcp_servers();
     log_mcp_bootstrap(&mcp_servers);
     set_mcp_startup_logging_enabled(false);
 
-    run_tui_app(TuiAppArgs {
-        tools: tools.clone(),
-        model,
-        cwd: cwd.as_ref().into(),
-    })
-    .await?;
+    run_tui_app().await?;
 
     tools.dispose().await;
     println!("👋 再见！");

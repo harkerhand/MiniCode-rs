@@ -10,6 +10,7 @@ authors.workspace = true
 anyhow = { workspace = true }
 dirs = { workspace = true }
 minicode-types = { workspace = true }
+minicode-config = { workspace = true }
 
 [lints]
 workspace = true

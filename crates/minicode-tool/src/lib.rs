@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use jsonschema::Draft;
 use jsonschema::Validator;
@@ -13,7 +15,7 @@ pub use shortcut::*;
 
 #[derive(Clone)]
 pub struct ToolContext {
-    pub cwd: String,
+    pub cwd: PathBuf,
     pub permissions: Option<Arc<PermissionManager>>,
 }
 
@@ -105,6 +107,19 @@ fn validate_tool_input(validator: &InputValidator, input: &Value) -> Result<(), 
 
 pub struct ToolRegistry {
     state: RwLock<ToolRegistryState>,
+}
+static TOOL_REGISTRY: OnceLock<ToolRegistry> = OnceLock::new();
+
+/// 初始化全局工具注册表（仅允许一次）。
+pub fn init_tool_registry(registry: ToolRegistry) -> Result<()> {
+    TOOL_REGISTRY
+        .set(registry)
+        .map_err(|_| anyhow!("Tool registry already initialized"))
+}
+
+/// 获取全局工具注册表。
+pub fn get_tool_registry() -> &'static ToolRegistry {
+    TOOL_REGISTRY.get().expect("Tool registry not initialized")
 }
 
 struct ToolRegistryState {

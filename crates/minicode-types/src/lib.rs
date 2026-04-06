@@ -1,4 +1,7 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    sync::{Arc, OnceLock},
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -128,4 +131,16 @@ impl Display for PermissionSummaryItem {
             }
         }
     }
+}
+
+static MODEL_ADAPTER: OnceLock<Arc<dyn ModelAdapter>> = OnceLock::new();
+
+pub fn set_model_adapter(adapter: Arc<dyn ModelAdapter>) -> anyhow::Result<()> {
+    MODEL_ADAPTER
+        .set(adapter)
+        .map_err(|_| anyhow::anyhow!("Model adapter has already been set"))
+}
+
+pub fn get_model_adapter() -> &'static Arc<dyn ModelAdapter> {
+    MODEL_ADAPTER.get().expect("Model adapter is not set")
 }

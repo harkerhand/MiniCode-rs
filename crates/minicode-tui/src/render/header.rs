@@ -1,17 +1,19 @@
-use minicode_config::runtime_config;
+use minicode_config::{runtime_config, runtime_store};
 use minicode_history::runtime_messages;
 use minicode_permissions::get_permission_manager;
+use minicode_tool::get_tool_registry;
 use minicode_types::PermissionSummaryItem;
 use ratatui::text::{Line, Span};
 
-use crate::state::{ScreenState, TuiAppArgs};
+use crate::state::ScreenState;
 use crate::theme::theme;
 
-pub(super) fn build_header_lines(args: &TuiAppArgs, state: &ScreenState) -> Vec<Line<'static>> {
+pub(super) fn build_header_lines(state: &ScreenState) -> Vec<Line<'static>> {
     let theme = theme();
-    let tools_count = args.tools.list().len();
-    let skills_count = args.tools.get_skills().len();
-    let mcp_count = args.tools.get_mcp_servers().len();
+    let tools = get_tool_registry();
+    let tools_count = tools.list().len();
+    let skills_count = tools.get_skills().len();
+    let mcp_count = tools.get_mcp_servers().len();
     let running_tasks = minicode_background_tasks::list_background_tasks()
         .into_iter()
         .filter(|task| task.status == "running")
@@ -46,7 +48,7 @@ pub(super) fn build_header_lines(args: &TuiAppArgs, state: &ScreenState) -> Vec<
         Line::from(vec![
             Span::styled("project", theme.header_label_info_style()),
             Span::raw(" "),
-            Span::raw(args.cwd.display().to_string()),
+            Span::raw(runtime_store().cwd.to_string_lossy().to_string()),
             Span::raw("   "),
             Span::styled("provider", theme.header_label_info_style()),
             Span::raw(" "),

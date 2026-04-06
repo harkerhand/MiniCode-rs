@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -6,7 +8,7 @@ pub struct SessionMetadata {
     pub created_at: String,
     pub ended_at: Option<String>,
     pub model: Option<String>,
-    pub cwd: String,
+    pub cwd: PathBuf,
     pub turn_count: usize,
     pub user_input_count: usize,
     pub tool_call_count: usize,
@@ -24,7 +26,7 @@ pub struct SessionIndexEntry {
     pub session_id: String,
     pub created_at: String,
     pub ended_at: Option<String>,
-    pub cwd: String,
+    pub cwd: PathBuf,
     pub turn_count: usize,
     pub model: Option<String>,
     pub status: String,

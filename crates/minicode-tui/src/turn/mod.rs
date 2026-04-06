@@ -6,20 +6,21 @@ use anyhow::Result;
 use crossterm::event::{self};
 use minicode_agent_core::run_agent_turn;
 use minicode_cli_commands::{find_matching_slash_commands, try_handle_local_command};
+use minicode_config::runtime_store;
 use minicode_history::{
     add_history_entry, append_runtime_message, estimate_context_tokens, load_history_entries,
     runtime_messages,
 };
 use minicode_permissions::get_permission_manager;
 use minicode_prompt::build_system_prompt;
-use minicode_tool::{ToolContext, parse_local_tool_shortcut};
-use minicode_types::ChatMessage;
+use minicode_tool::{ToolContext, get_tool_registry, parse_local_tool_shortcut};
+use minicode_types::{ChatMessage, get_model_adapter};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 
 use crate::render::render_screen;
-use crate::state::{ChannelCallbacks, ScreenState, TuiAppArgs, TurnEvent};
+use crate::state::{ChannelCallbacks, ScreenState, TurnEvent};
 
 mod approval;
 mod busy_input;
@@ -34,7 +35,6 @@ use prompt_handler::build_prompt_handler;
 /// 处理用户提交：本地命令、快捷工具或模型回合。
 pub(crate) async fn handle_submit(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    args: &mut TuiAppArgs,
     state: &mut ScreenState,
     raw_input: String,
 ) -> Result<bool> {
@@ -52,7 +52,7 @@ pub(crate) async fn handle_submit(
     state.history_index = state.history.len();
     state.history_draft.clear();
 
-    match try_handle_local_command(&input, &args.cwd, &args.tools).await {
+    match try_handle_local_command(&input).await {
         Ok(Some(local)) => {
             let messages = runtime_messages();
             state.context_tokens_estimate = estimate_context_tokens(&messages);
@@ -76,8 +76,7 @@ pub(crate) async fn handle_submit(
         let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
         let task_permissions = permissions.clone();
         task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
-        let tools = args.tools.clone();
-        let cwd = args.cwd.to_string_lossy().to_string();
+        let cwd = runtime_store().cwd.clone();
         let payload = shortcut.input;
         let tool_name_owned = shortcut.tool_name.to_string();
 
@@ -86,7 +85,7 @@ pub(crate) async fn handle_submit(
                 tool_name: tool_name_owned.clone(),
                 input: payload.clone(),
             });
-            let result = tools
+            let result = get_tool_registry()
                 .execute(
                     &tool_name_owned,
                     payload,
@@ -110,7 +109,7 @@ pub(crate) async fn handle_submit(
                     state.is_busy = false;
                 }
             }
-            render_screen(terminal, args, state)?;
+            render_screen(terminal, state)?;
             if event::poll(Duration::from_millis(60))? {
                 let input_event = event::read()?;
                 handle_busy_event(state, input_event);
@@ -137,8 +136,8 @@ pub(crate) async fn handle_submit(
         return Ok(false);
     }
 
-    let skills = args.tools.get_skills();
-    let mcp_servers = args.tools.get_mcp_servers();
+    let skills = get_tool_registry().get_skills();
+    let mcp_servers = get_tool_registry().get_mcp_servers();
 
     append_runtime_message(ChatMessage::User {
         content: input.clone(),
@@ -147,12 +146,7 @@ pub(crate) async fn handle_submit(
 
     let mut current_messages = Vec::with_capacity(next_messages.len() + 1);
     current_messages.push(ChatMessage::System {
-        content: build_system_prompt(
-            &args.cwd,
-            &permissions.get_summary_text(),
-            &skills,
-            &mcp_servers,
-        ),
+        content: build_system_prompt(&skills, &mcp_servers),
     });
     current_messages.extend(next_messages.clone());
 
@@ -165,16 +159,14 @@ pub(crate) async fn handle_submit(
     let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
     let task_permissions = permissions.clone();
     task_permissions.set_prompt_handler(build_prompt_handler(tx.clone()));
-    let tools = args.tools.clone();
-    let model = args.model.clone();
+    let model = get_model_adapter();
     let current_messages = current_messages;
-    let cwd = args.cwd.to_string_lossy().to_string();
+    let cwd = runtime_store().cwd.clone();
 
     tokio::spawn(async move {
         let mut callbacks = ChannelCallbacks { tx: tx.clone() };
         let new_messages = run_agent_turn(
             model.as_ref(),
-            &tools,
             current_messages,
             ToolContext {
                 cwd,
@@ -197,7 +189,7 @@ pub(crate) async fn handle_submit(
             }
         }
 
-        render_screen(terminal, args, state)?;
+        render_screen(terminal, state)?;
 
         if !turn_done && event::poll(Duration::from_millis(60))? {
             let input_event = event::read()?;

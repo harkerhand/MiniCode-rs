@@ -1,4 +1,4 @@
-use minicode_tool::{ToolContext, ToolRegistry};
+use minicode_tool::{ToolContext, get_tool_registry};
 use minicode_types::{AgentStep, ChatMessage, ModelAdapter};
 use serde_json::Value;
 
@@ -51,7 +51,6 @@ fn format_diagnostics(
 /// 执行一轮 agent 对话，循环处理助手输出与工具调用。
 pub async fn run_agent_turn(
     model: &dyn ModelAdapter,
-    tools: &ToolRegistry,
     messages: Vec<ChatMessage>,
     context: ToolContext,
     max_steps: Option<usize>,
@@ -220,7 +219,7 @@ pub async fn run_agent_turn(
                     if let Some(cb) = callbacks.as_deref_mut() {
                         cb.on_tool_start(&call.tool_name, &call.input);
                     }
-                    let result = tools
+                    let result = get_tool_registry()
                         .execute(&call.tool_name, call.input.clone(), &context)
                         .await;
                     if let Some(cb) = callbacks.as_deref_mut() {

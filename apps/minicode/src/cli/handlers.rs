@@ -109,7 +109,7 @@ async fn handle_mcp_command(cwd: impl AsRef<Path>, cmd: McpCommand) -> Result<bo
 /// 处理技能相关命令
 async fn handle_skills_command(cwd: impl AsRef<Path>, cmd: SkillsCommand) -> Result<bool> {
     match cmd {
-        SkillsCommand::List => list_skills(cwd.as_ref()).await,
+        SkillsCommand::List => list_skills().await,
         SkillsCommand::Add {
             path,
             name,

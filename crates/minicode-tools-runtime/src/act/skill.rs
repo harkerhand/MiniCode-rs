@@ -1,5 +1,6 @@
 use crate::ToolContext;
 use async_trait::async_trait;
+use minicode_config::runtime_store;
 use minicode_skills::load_skill;
 use minicode_tool::Tool;
 use minicode_tool::ToolResult;
@@ -7,15 +8,7 @@ use serde_json::Value;
 use serde_json::json;
 
 #[derive(Default)]
-pub struct LoadSkillTool {
-    cwd: std::path::PathBuf,
-}
-impl LoadSkillTool {
-    /// 创建技能加载工具并绑定工作目录。
-    pub fn new(cwd: std::path::PathBuf) -> Self {
-        Self { cwd }
-    }
-}
+pub struct LoadSkillTool;
 #[async_trait]
 impl Tool for LoadSkillTool {
     /// 返回工具名称。
@@ -36,7 +29,7 @@ impl Tool for LoadSkillTool {
         if name.is_empty() {
             return ToolResult::err("name is required");
         }
-        if let Some(skill) = load_skill(&self.cwd, name) {
+        if let Some(skill) = load_skill(&runtime_store().cwd, name) {
             return ToolResult::ok(skill.content);
         }
         ToolResult::err(format!("Skill not found: {name}"))

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt};
-use minicode_config::McpServerConfig;
+use minicode_config::{McpServerConfig, runtime_store};
 use minicode_tool::Tool;
 use minicode_types::McpServerSummary;
 use tokio::sync::Mutex;
@@ -29,10 +29,7 @@ fn summarize_server_endpoint(config: &McpServerConfig) -> String {
     }
 }
 
-pub async fn create_mcp_backed_tools(
-    cwd: &std::path::Path,
-    mcp_servers: &HashMap<String, McpServerConfig>,
-) -> McpBundle {
+pub async fn create_mcp_backed_tools(mcp_servers: &HashMap<String, McpServerConfig>) -> McpBundle {
     let mut tools: Vec<Arc<dyn Tool>> = vec![];
     let mut servers = vec![];
     let mut clients: HashMap<String, Arc<Mutex<McpClient>>> = HashMap::new();
@@ -79,7 +76,7 @@ pub async fn create_mcp_backed_tools(
 
         let server_name = server_name.clone();
         let config = config.clone();
-        let cwd = cwd.to_path_buf();
+        let cwd = runtime_store().cwd.clone();
         pending.push(async move {
             let failure_server_name = server_name.clone();
             let failure_config = config.clone();

@@ -74,8 +74,8 @@ pub async fn remove_mcp_server(cwd: impl AsRef<Path>, project: bool, name: Strin
 }
 
 /// 列出技能
-pub async fn list_skills(cwd: impl AsRef<Path>) -> Result<bool> {
-    let skills = discover_skills(cwd);
+pub async fn list_skills() -> Result<bool> {
+    let skills = discover_skills();
     if skills.is_empty() {
         println!("No skills discovered.");
         return Ok(true);

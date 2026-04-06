@@ -1,12 +1,9 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use minicode_agent_core::AgentTurnCallbacks;
 use minicode_permissions::{PermissionPromptRequest, PermissionPromptResult};
-use minicode_tool::{ToolRegistry, ToolResult};
-use minicode_types::ModelAdapter;
+use minicode_tool::ToolResult;
 use tokio::sync::{mpsc, oneshot};
 
 pub(crate) struct PendingApproval {
@@ -87,12 +84,6 @@ impl Default for ScreenState {
             context_tokens_estimate: 0,
         }
     }
-}
-
-pub struct TuiAppArgs {
-    pub tools: Arc<ToolRegistry>,
-    pub model: Arc<dyn ModelAdapter>,
-    pub cwd: PathBuf,
 }
 
 pub(crate) struct ChannelCallbacks {

@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
@@ -6,7 +5,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use minicode_config::RuntimeConfig;
 use minicode_config::runtime_config;
-use minicode_tool::ToolRegistry;
+use minicode_tool::get_tool_registry;
 use minicode_types::{AgentStep, ChatMessage, ModelAdapter, StepDiagnostics, ToolCall};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
@@ -30,18 +29,18 @@ struct AnthropicResponse {
 
 pub struct AnthropicModelAdapter {
     client: reqwest::Client,
-    tools: Arc<ToolRegistry>,
+}
+
+impl Default for AnthropicModelAdapter {
+    /// 创建 Anthropic 适配器并绑定工具注册表与工作目录。
+    fn default() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
 }
 
 impl AnthropicModelAdapter {
-    /// 创建 Anthropic 适配器并绑定工具注册表与工作目录。
-    pub fn new(tools: Arc<ToolRegistry>) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            tools,
-        }
-    }
-
     /// 解析助手文本中的 `<progress>/<final>` 标记。
     fn parse_assistant_text(content: &str) -> (String, Option<String>) {
         let trimmed = content.trim();
@@ -194,8 +193,7 @@ impl ModelAdapter for AnthropicModelAdapter {
         let runtime = self.get_runtime().await?;
         let (system, anth_messages) = Self::parse_anthropic_messages(messages);
 
-        let tool_defs: Vec<Value> = self
-            .tools
+        let tool_defs: Vec<Value> = get_tool_registry()
             .list()
             .iter()
             .map(|tool| {

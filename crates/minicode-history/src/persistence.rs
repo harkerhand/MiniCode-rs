@@ -3,23 +3,24 @@ use std::path::Path;
 
 use anyhow::Result;
 use minicode_config::{
-    project_session_metadata_path, project_sessions_dir, project_sessions_index,
+    project_session_metadata_path, project_sessions_dir, project_sessions_index, runtime_store,
 };
 
 use crate::{SessionIndex, SessionIndexEntry, SessionMetadata};
 
 /// 把完整的会话记录保存到磁盘上，供后续恢复使用
-pub fn save_session_metadata(cwd: impl AsRef<Path>, session: &SessionMetadata) -> Result<()> {
-    let session_dir = project_sessions_dir(cwd.as_ref()).join(&session.session_id);
+pub fn save_session_metadata(session: &SessionMetadata) -> Result<()> {
+    let cwd = runtime_store().cwd.clone();
+    let session_dir = project_sessions_dir(&cwd).join(&session.session_id);
     fs::create_dir_all(&session_dir)?;
 
-    let metadata_path = project_session_metadata_path(cwd.as_ref(), &session.session_id);
+    let metadata_path = project_session_metadata_path(&cwd, &session.session_id);
     fs::write(
         metadata_path,
         format!("{}\n", serde_json::to_string_pretty(&session)?),
     )?;
 
-    update_session_index(cwd.as_ref(), session)?;
+    update_session_index(&cwd, session)?;
     Ok(())
 }
 

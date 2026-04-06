@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
+use minicode_config::runtime_store;
 use minicode_types::SkillSummary;
 
 #[derive(Debug, Clone)]
@@ -48,7 +49,8 @@ fn skill_roots(cwd: impl AsRef<Path>) -> Vec<(PathBuf, String)> {
 }
 
 /// 扫描并返回当前可用技能摘要。
-pub fn discover_skills(cwd: impl AsRef<Path>) -> Vec<SkillSummary> {
+pub fn discover_skills() -> Vec<SkillSummary> {
+    let cwd = runtime_store().cwd.clone();
     let mut by_name: HashMap<String, SkillSummary> = HashMap::new();
     for (root, source) in skill_roots(cwd) {
         let Ok(entries) = fs::read_dir(root) else {

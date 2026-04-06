@@ -20,8 +20,8 @@ pub fn set_mcp_startup_logging_enabled(enabled: bool) {
 }
 
 /// 创建默认工具注册表，并按配置注入 MCP 工具。
-pub async fn create_default_tool_registry(cwd: &std::path::Path) -> Result<ToolRegistry> {
-    let skills = discover_skills(cwd);
+pub async fn create_default_tool_registry() -> Result<ToolRegistry> {
+    let skills = discover_skills();
     let mut tools: Vec<Arc<dyn Tool>> = vec![
         Arc::new(AskUserTool),
         Arc::new(ListFilesTool),
@@ -40,10 +40,10 @@ pub async fn create_default_tool_registry(cwd: &std::path::Path) -> Result<ToolR
         Arc::new(RunCommandTool),
         Arc::new(WebSearchTool),
         Arc::new(WebFetchTool),
-        Arc::new(LoadSkillTool::new(cwd.to_path_buf())),
+        Arc::new(LoadSkillTool),
     ];
     let runtime = runtime_config();
-    let mcp = create_mcp_backed_tools(cwd, &runtime.mcp_servers).await;
+    let mcp = create_mcp_backed_tools(&runtime.mcp_servers).await;
     tools.extend(mcp.tools);
     let mcp_server_summaries = mcp.servers;
     let mcp_disposer = mcp.disposer;

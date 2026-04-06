@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListState, Paragraph, Wrap};
 
 use crate::input::{display_width, get_visible_commands};
-use crate::state::{ScreenState, TuiAppArgs};
+use crate::state::ScreenState;
 use crate::theme::theme;
 
 mod approval;
@@ -24,7 +24,6 @@ use ui_utils::{centered_rect, sanitize_line, wrap_input_view};
 
 pub(crate) fn render_screen(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    args: &TuiAppArgs,
     state: &mut ScreenState,
 ) -> Result<()> {
     let theme = theme();
@@ -56,7 +55,7 @@ pub(crate) fn render_screen(
             ])
             .split(area);
 
-        let header = Paragraph::new(build_header_lines(args, state))
+        let header = Paragraph::new(build_header_lines(state))
             .block(
                 Block::default()
                     .title(" Workspace ")

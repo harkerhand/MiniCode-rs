@@ -28,7 +28,6 @@ use input::{
 };
 use render::render_screen;
 use state::ScreenState;
-pub use state::TuiAppArgs;
 use turn::{handle_approval_key, handle_submit};
 
 struct TerminalGuard;
@@ -59,7 +58,7 @@ impl Drop for TerminalGuard {
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 
 /// 运行主 TUI 事件循环并处理用户输入。
-pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
+pub async fn run_tui_app() -> Result<()> {
     let _terminal_guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -81,7 +80,7 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
 
     let mut should_exit = false;
     while !should_exit {
-        render_screen(&mut terminal, &args, &mut state)?;
+        render_screen(&mut terminal, &mut state)?;
 
         if event::poll(Duration::from_millis(150))? {
             match event::read()? {
@@ -143,9 +142,7 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
                             state.input.clear();
                             state.cursor_offset = 0;
                             state.selected_slash_index = 0;
-                            match handle_submit(&mut terminal, &mut args, &mut state, submitted)
-                                .await
-                            {
+                            match handle_submit(&mut terminal, &mut state, submitted).await {
                                 Ok(exit) => should_exit = exit,
                                 Err(err) => {
                                     append_runtime_message(ChatMessage::Assistant {
@@ -332,13 +329,13 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
         created_at: runtime_store().session_started_at.to_rfc3339(),
         ended_at: Some(chrono::Utc::now().to_rfc3339()),
         model: Some(runtime_config().model),
-        cwd: args.cwd.to_string_lossy().to_string(),
+        cwd: runtime_store().cwd.clone(),
         turn_count: state.turn_count,
         user_input_count: state.message_count,
         tool_call_count: 0,
         status: "completed".to_string(),
     };
 
-    let _ = minicode_history::save_session_metadata(&args.cwd, &metadata);
+    let _ = minicode_history::save_session_metadata(&metadata);
     Ok(())
 }

@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use minicode_config::runtime_store;
+use minicode_permissions::get_permission_manager;
 use minicode_types::{McpServerSummary, SkillSummary};
 
 /// 尝试读取文件内容，失败时返回 `None`。
@@ -8,17 +10,15 @@ fn maybe_read(path: impl AsRef<Path>) -> Option<String> {
 }
 
 /// 组合运行上下文、权限、技能和 MCP 信息，生成系统提示词。
-pub fn build_system_prompt(
-    cwd: impl AsRef<Path>,
-    permission_summary: &[String],
-    skills: &[SkillSummary],
-    mcp_servers: &[McpServerSummary],
-) -> String {
+pub fn build_system_prompt(skills: &[SkillSummary], mcp_servers: &[McpServerSummary]) -> String {
+    let cwd = runtime_store().cwd.clone();
+    let permission_summary = get_permission_manager().get_summary_text();
+
     let mut lines = vec![
         "You are mini-code, a terminal coding assistant.".to_string(),
         "Default behavior: inspect the repository, use tools, make code changes when appropriate, and explain results clearly.".to_string(),
         "Prefer reading files, searching code, editing files, and running verification commands over giving purely theoretical advice.".to_string(),
-        format!("Current cwd: {}", cwd.as_ref().display()),
+        format!("Current cwd: {}", cwd.display()),
         "You can inspect or modify paths outside the current cwd when the user asks, but tool permissions may pause for approval first.".to_string(),
         "When making code changes, keep them minimal, practical, and working-oriented.".to_string(),
         "If the user clearly asked you to build, modify, optimize, or generate something, do the work instead of stopping at a plan.".to_string(),
@@ -106,7 +106,7 @@ pub fn build_system_prompt(
         }
     }
 
-    let project_path = cwd.as_ref().join("CLAUDE.md");
+    let project_path = cwd.join("CLAUDE.md");
     if let Some(content) = maybe_read(&project_path) {
         lines.push(format!(
             "Project instructions from {}:\n{}",
