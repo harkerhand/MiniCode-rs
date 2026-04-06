@@ -1,13 +1,11 @@
+use minicode_config::runtime_store;
 use minicode_types::PermissionSummaryItem;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::future::Future;
-use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tokio::sync::Mutex;
-
-use anyhow::{Result, anyhow};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(crate) struct PermissionStore {
@@ -75,7 +73,7 @@ pub struct EnsureCommandOptions {
     pub force_prompt_reason: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct PermissionState {
     pub(crate) allowed_directory_prefixes: HashSet<String>,
     pub(crate) denied_directory_prefixes: HashSet<String>,
@@ -95,43 +93,8 @@ pub(crate) struct PermissionState {
 
 #[derive(Clone)]
 pub struct PermissionManager {
-    pub(crate) workspace_root: PathBuf,
-    pub(crate) store_path: PathBuf,
     pub(crate) state: Arc<Mutex<PermissionState>>,
     pub(crate) prompt_handler: Arc<Mutex<Option<PermissionPromptHandler>>>,
-}
-
-static SESSION_PERMISSIONS: OnceLock<PermissionManager> = OnceLock::new();
-
-pub fn init_session_permissions(permissions: PermissionManager) -> Result<()> {
-    SESSION_PERMISSIONS
-        .set(permissions)
-        .map_err(|_| anyhow!("Session permissions already initialized"))
-}
-
-pub fn session_permissions() -> &'static PermissionManager {
-    SESSION_PERMISSIONS
-        .get()
-        .expect("Session permissions not initialized")
-}
-
-impl std::fmt::Debug for PermissionManager {
-    /// 自定义 Debug 输出，避免泄露共享状态细节。
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PermissionManager")
-            .field("workspace_root", &self.workspace_root)
-            .field("store_path", &self.store_path)
-            .field("state", &"<shared-state>")
-            .field(
-                "prompt_handler",
-                &self
-                    .prompt_handler
-                    .try_lock()
-                    .ok()
-                    .and_then(|x| x.as_ref().map(|_| "<handler>")),
-            )
-            .finish()
-    }
 }
 
 impl PermissionManager {
@@ -139,9 +102,8 @@ impl PermissionManager {
     pub fn get_summary(&self) -> Vec<PermissionSummaryItem> {
         let mut output = Vec::new();
         let state = self.state.try_lock().ok();
-        output.push(PermissionSummaryItem::Cwd(
-            self.workspace_root.display().to_string(),
-        ));
+        let cwd = runtime_store().cwd.to_string_lossy().to_string();
+        output.push(PermissionSummaryItem::Cwd(cwd));
         let empty_dirs = state
             .as_ref()
             .map(|x| x.allowed_directory_prefixes.is_empty())

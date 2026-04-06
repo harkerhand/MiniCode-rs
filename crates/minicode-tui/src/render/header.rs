@@ -1,6 +1,6 @@
 use minicode_config::runtime_config;
 use minicode_history::runtime_messages;
-use minicode_permissions::session_permissions;
+use minicode_permissions::get_permission_manager;
 use minicode_types::PermissionSummaryItem;
 use ratatui::text::{Line, Span};
 
@@ -74,7 +74,7 @@ pub(super) fn build_header_lines(args: &TuiAppArgs, state: &ScreenState) -> Vec<
         ]),
         Line::from({
             let mut line = Vec::new();
-            let permissions_summary = session_permissions().get_summary();
+            let permissions_summary = get_permission_manager().get_summary();
             for item in permissions_summary {
                 match item {
                     PermissionSummaryItem::Cwd(cwd) => {

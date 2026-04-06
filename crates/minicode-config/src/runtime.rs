@@ -1,12 +1,11 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, RwLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 
 use crate::{McpServerConfig, build_runtime_config};
 use chrono::{DateTime, Utc};
-use minicode_types::ChatMessage;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -32,8 +31,6 @@ pub struct RuntimeStore {
     pub session_id: String,
     pub session_started_at: DateTime<Utc>,
     pub runtime_config: Arc<RwLock<RuntimeConfig>>,
-    pub runtime_messages: Arc<Mutex<Vec<ChatMessage>>>,
-    pub runtime_input_history: Arc<Mutex<Vec<String>>>,
 }
 
 static RUNTIME_STORE: OnceLock<RuntimeStore> = OnceLock::new();
@@ -45,20 +42,10 @@ pub fn init_runtime_store(cwd: impl AsRef<Path>, session_id: impl AsRef<str>) {
         session_id: session_id.as_ref().to_string(),
         session_started_at: Utc::now(),
         runtime_config: Arc::new(RwLock::new(runtime_config)),
-        runtime_messages: Arc::new(Mutex::new(Vec::new())),
-        runtime_input_history: Arc::new(Mutex::new(Vec::new())),
     };
     let _ = RUNTIME_STORE.set(store);
 }
 
 pub fn runtime_store() -> &'static RuntimeStore {
     RUNTIME_STORE.get().expect("Runtime store not initialized")
-}
-
-pub fn runtime_messages_state() -> Arc<Mutex<Vec<ChatMessage>>> {
-    runtime_store().runtime_messages.clone()
-}
-
-pub fn runtime_input_history_state() -> Arc<Mutex<Vec<String>>> {
-    runtime_store().runtime_input_history.clone()
 }

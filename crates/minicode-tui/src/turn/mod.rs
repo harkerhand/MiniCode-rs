@@ -10,7 +10,7 @@ use minicode_history::{
     add_history_entry, append_runtime_message, estimate_context_tokens, load_history_entries,
     runtime_messages,
 };
-use minicode_permissions::session_permissions;
+use minicode_permissions::get_permission_manager;
 use minicode_prompt::build_system_prompt;
 use minicode_tool::{ToolContext, parse_local_tool_shortcut};
 use minicode_types::ChatMessage;
@@ -38,7 +38,7 @@ pub(crate) async fn handle_submit(
     state: &mut ScreenState,
     raw_input: String,
 ) -> Result<bool> {
-    let permissions = session_permissions();
+    let permissions = get_permission_manager();
     let input = raw_input.trim().to_string();
     if input.is_empty() {
         return Ok(false);

@@ -85,10 +85,6 @@ async fn launch_tui_app(cwd: impl AsRef<Path>, tools: Arc<ToolRegistry>) -> Resu
         Arc::new(AnthropicModelAdapter::new(tools.clone()))
     };
 
-    let permissions = PermissionManager::new(cwd.as_ref())?;
-
-    init_session_permissions(permissions.clone())?;
-
     let mcp_servers = tools.get_mcp_servers();
     log_mcp_bootstrap(&mcp_servers);
     set_mcp_startup_logging_enabled(false);

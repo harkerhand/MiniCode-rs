@@ -8,8 +8,10 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use minicode_config::{runtime_config, runtime_input_history_state, runtime_store};
-use minicode_history::{append_runtime_message, estimate_context_tokens, runtime_messages};
+use minicode_config::{runtime_config, runtime_store};
+use minicode_history::{
+    append_runtime_message, estimate_context_tokens, get_input_history, runtime_messages,
+};
 use minicode_types::ChatMessage;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -24,7 +26,6 @@ use input::{
     char_len, get_visible_commands, history_down, history_up, insert_char_at, remove_char_at,
     remove_char_before, scroll_transcript_by, toggle_tool_details,
 };
-pub use minicode_permissions::init_session_permissions;
 use render::render_screen;
 use state::ScreenState;
 pub use state::TuiAppArgs;
@@ -65,7 +66,7 @@ pub async fn run_tui_app(mut args: TuiAppArgs) -> Result<()> {
 
     // 使用预先准备好的数据（在 run() 函数中已经加载并处理过）
     let initial_messages = runtime_messages();
-    let history = runtime_input_history_state();
+    let history = get_input_history();
     let history = history.lock().map(|g| g.clone()).unwrap_or_default();
     let mut state = ScreenState {
         history,

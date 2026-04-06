@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use minicode_config::{project_session_conversation_path, runtime_messages_state, runtime_store};
+use minicode_config::{project_session_conversation_path, runtime_store};
 use minicode_types::ChatMessage;
 use serde::{Deserialize, Serialize};
 
@@ -51,21 +52,18 @@ pub fn load_runtime_messages_from_file() {
         && let Ok(content) = fs::read_to_string(path)
         && let Ok(conv) = toml::from_str::<ConversationFile>(&content)
     {
-        let arc = runtime_messages_state();
+        let arc = get_messages();
         let mut guard = arc.lock().unwrap_or_else(|e| e.into_inner());
         *guard = conv.messages;
     }
 }
 
 pub fn runtime_messages() -> Vec<ChatMessage> {
-    runtime_messages_state()
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default()
+    get_messages().lock().map(|g| g.clone()).unwrap_or_default()
 }
 
 pub fn clear_runtime_messages() {
-    let arc = runtime_messages_state();
+    let arc = get_messages();
     let mut guard = arc.lock().unwrap_or_else(|e| e.into_inner());
     guard.clear();
     persist_runtime_messages(&[]);
@@ -75,8 +73,16 @@ pub fn append_runtime_message(message: ChatMessage) {
     if matches!(message, ChatMessage::System { .. }) {
         return;
     }
-    let arc = runtime_messages_state();
+    let arc = get_messages();
     let mut guard = arc.lock().unwrap_or_else(|e| e.into_inner());
     guard.push(message);
     persist_runtime_messages(&guard);
+}
+
+static MESSAGES: OnceLock<Arc<Mutex<Vec<ChatMessage>>>> = OnceLock::new();
+
+pub fn get_messages() -> Arc<Mutex<Vec<ChatMessage>>> {
+    MESSAGES
+        .get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+        .clone()
 }

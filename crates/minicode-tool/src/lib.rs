@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 mod shortcut;
 pub use shortcut::*;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ToolContext {
     pub cwd: String,
     pub permissions: Option<Arc<PermissionManager>>,

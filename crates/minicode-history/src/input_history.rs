@@ -1,8 +1,9 @@
-use std::fs;
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
+use std::{fs, sync::Mutex};
 
 use anyhow::Result;
-use minicode_config::{project_session_dir, runtime_input_history_state, runtime_store};
+use minicode_config::{project_session_dir, runtime_store};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -55,7 +56,7 @@ fn save_session_history_entries(
 
 /// 新增一条历史输入并持久化到当前活动会话的 TOML 文件。
 pub fn add_history_entry(entry: impl AsRef<str>) -> Result<()> {
-    let history = runtime_input_history_state();
+    let history = get_input_history();
     let mut history = history.lock().unwrap_or_else(|e| e.into_inner());
     history.push(entry.as_ref().to_string());
     let cwd = runtime_store().cwd.clone();
@@ -66,7 +67,7 @@ pub fn add_history_entry(entry: impl AsRef<str>) -> Result<()> {
 
 /// 清空当前活动会话的历史输入文件。
 pub fn clear_history_entries() -> Result<()> {
-    let history = runtime_input_history_state();
+    let history = get_input_history();
     let mut history = history.lock().unwrap_or_else(|e| e.into_inner());
     history.clear();
     let cwd = runtime_store().cwd.clone();
@@ -81,8 +82,16 @@ pub fn load_input_history_from_file() -> Result<()> {
     let path = session_history_path(cwd, &session_id);
     let content = fs::read_to_string(path)?;
     let parsed = toml::from_str::<HistoryFile>(&content)?;
-    let history = runtime_input_history_state();
+    let history = get_input_history();
     let mut history = history.lock().unwrap_or_else(|e| e.into_inner());
     *history = parsed.entries;
     Ok(())
+}
+
+static INPUT_HISTORY: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
+
+pub fn get_input_history() -> Arc<Mutex<Vec<String>>> {
+    INPUT_HISTORY
+        .get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+        .clone()
 }

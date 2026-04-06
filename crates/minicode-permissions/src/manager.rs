@@ -11,13 +11,13 @@ use crate::{
     PermissionState, PermissionStore, classify_dangerous_command, is_within_directory, read_store,
 };
 
-impl PermissionManager {
+impl Default for PermissionManager {
     /// 从持久化存储加载权限配置并初始化管理器。
-    pub fn new(workspace_root: impl AsRef<Path>) -> Result<Self> {
+    fn default() -> Self {
         let cwd = runtime_store().cwd.clone();
         let session_id = runtime_store().session_id.clone();
         let store_path = project_session_permissions_path(&cwd, &session_id);
-        let store = read_store(&store_path)?;
+        let store = read_store(&store_path).unwrap_or_default();
 
         let state = PermissionState {
             allowed_directory_prefixes: store.allowed_directory_prefixes.into_iter().collect(),
@@ -35,14 +35,14 @@ impl PermissionManager {
             turn_allowed_edits: std::collections::HashSet::new(),
             turn_allow_all_edits: false,
         };
-        Ok(Self {
-            workspace_root: workspace_root.as_ref().to_path_buf(),
-            store_path,
+        Self {
             state: std::sync::Arc::new(tokio::sync::Mutex::new(state)),
             prompt_handler: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-        })
+        }
     }
+}
 
+impl PermissionManager {
     /// 注册用于 UI 审批流程的异步回调。
     pub fn set_prompt_handler(&self, handler: PermissionPromptHandler) {
         if let Ok(mut slot) = self.prompt_handler.try_lock() {
@@ -58,8 +58,8 @@ impl PermissionManager {
         fallback_allow: PermissionDecision,
         fallback_deny: PermissionDecision,
     ) -> Result<PermissionPromptResult> {
-        let handler = self.prompt_handler.lock().await.clone();
-        if let Some(handler) = handler {
+        let handler = self.prompt_handler.lock().await;
+        if let Some(handler) = &*handler {
             let decision = handler(request).await;
             return Ok(decision);
         }
@@ -91,15 +91,15 @@ impl PermissionManager {
         let normalized = Path::new(target_path)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(target_path));
+        let cwd = runtime_store().cwd.to_string_lossy().to_string();
 
-        if normalized.starts_with(&self.workspace_root) {
+        if normalized.starts_with(&cwd) {
             return Ok(());
         }
 
         let target = normalized.to_string_lossy().to_string();
         let (already_denied, already_allowed) = {
             let state = self.state.lock().await;
-
             (
                 state.session_denied_paths.contains(&target)
                     || state
@@ -137,7 +137,7 @@ impl PermissionManager {
                     kind: PermissionPromptKind::Path,
                     title: "mini-code wants path access outside cwd".to_string(),
                     details: vec![
-                        format!("cwd: {}", self.workspace_root.display()),
+                        format!("cwd: {}", cwd),
                         format!("target: {}", target),
                         format!("scope directory: {}", scope),
                     ],
@@ -167,7 +167,7 @@ impl PermissionManager {
                 },
                 &format!(
                     "Allow path access outside cwd?\n- cwd: {}\n- target: {}\nEnter y to allow, others to deny: ",
-                    self.workspace_root.display(),
+                    cwd,
                     target
                 ),
                 PermissionDecision::AllowOnce,
@@ -440,7 +440,8 @@ impl PermissionManager {
 
     /// 将可持久化权限规则写回磁盘。
     pub fn persist(&self) -> Result<()> {
-        let path = self.store_path.clone();
+        let path =
+            project_session_permissions_path(&runtime_store().cwd, &runtime_store().session_id);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
