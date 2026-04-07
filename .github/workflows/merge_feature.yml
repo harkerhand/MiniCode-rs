@@ -1,0 +1,49 @@
+name: 同步多份实现文档
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  merge-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 拉取并合并文档
+        run: |
+          # 格式: owner/repo
+          REPOS=("LiuMengxuan04/MiniCode/" "QUSETIONS/MiniCode-Python" "harkerhand/MiniCode-rs")
+          OUTPUT_FILE="MULTI_IMPL.md"
+
+          echo "# MiniCode 的多语言实现" > "$OUTPUT_FILE"
+          echo "最后更新: $(date)" >> "$OUTPUT_FILE"
+          echo -e "\n---\n" >> "$OUTPUT_FILE"
+
+          for REPO in "${REPOS[@]}"; do
+            echo "正在从 $REPO 拉取..."
+            
+            # 使用 raw 地址，分支名通常为 main 或 master
+            # 如果不确定，可以先 curl -I 测试下 404
+            URL="https://raw.githubusercontent.com/${REPO}/main/FEATURE.md"
+            
+            # 使用 curl 获取，如果成功则写入
+            if CONTENT=$(curl -fsSL "$URL"); then
+              echo "## 来自 $REPO 的实现" >> "$OUTPUT_FILE"
+              # 统一处理层级，将原文档的 # 标题降级为 ###，避免破坏主文档结构
+              echo "$CONTENT" | sed 's/^# /### /g' >> "$OUTPUT_FILE"
+              echo -e "\n\n---\n" >> "$OUTPUT_FILE"
+            else
+              echo "警告: 无法从 $REPO 拉取 feature.md（请检查是否存在 main 分支）"
+            fi
+          done
+
+      - name: 创建 Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "docs: sync external feature.md content"
+          branch: feature/sync-docs
+          title: "更新多份实现文档"
+          body: "通过 raw.githubusercontent.com 自动同步更新"
