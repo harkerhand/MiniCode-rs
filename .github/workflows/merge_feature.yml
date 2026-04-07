@@ -8,6 +8,9 @@ on:
 jobs:
   merge-docs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 允许提交代码
+      pull-requests: write # 允许创建 PR
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
