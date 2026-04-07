@@ -1,0 +1,14 @@
+# MiniCode 的多语言实现
+最后更新: Tue Apr  7 11:56:59 UTC 2026
+
+---
+
+## 来自 harkerhand/MiniCode-rs 的实现
+这是 MiniCode 的 Rust 语言实现
+
+### 特色功能
+- 历史记录保存在工作目录内，因此迁移或移动项目位置时，可以更方便地保留当前项目的 MiniCode 上下文。
+
+
+---
+
