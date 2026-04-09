@@ -40,6 +40,9 @@ pub struct SessionIndexEntry {
 
 /// 把完整的会话记录保存到磁盘上，供后续恢复使用
 pub fn save_session_metadata(session: &SessionMetadata) -> Result<()> {
+    if session.turn_count == 0 {
+        return Ok(()); // 不保存没有任何用户输入的会话
+    }
     let cwd = runtime_store().cwd.clone();
     let session_dir = project_sessions_dir(&cwd).join(&session.session_id);
     fs::create_dir_all(&session_dir)?;

@@ -29,6 +29,9 @@ fn save_session_messages(
     session_id: &str,
     messages: &[ChatMessage],
 ) -> Result<()> {
+    if messages.is_empty() {
+        return Ok(()); // 不保存没有任何用户输入的会话
+    }
     let path = project_session_conversation_path(cwd, session_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
