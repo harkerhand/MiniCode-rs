@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use minicode_tool::BackgroundTaskResult;
@@ -11,11 +11,8 @@ struct BackgroundTaskRecord {
     cwd: String,
 }
 
-/// 返回后台任务的全局存储实例。
-fn task_store() -> &'static Mutex<HashMap<String, BackgroundTaskRecord>> {
-    static STORE: OnceLock<Mutex<HashMap<String, BackgroundTaskRecord>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static STORE: LazyLock<Mutex<HashMap<String, BackgroundTaskRecord>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 获取当前 Unix 时间戳（秒）。
 fn now_unix_seconds() -> i64 {
@@ -70,7 +67,7 @@ pub fn register_background_shell_task(command: &str, pid: i32, cwd: &str) -> Bac
         cwd: cwd.to_string(),
     };
 
-    if let Ok(mut tasks) = task_store().try_lock() {
+    if let Ok(mut tasks) = STORE.try_lock() {
         tasks.insert(task.task_id.clone(), record);
     }
 
@@ -80,7 +77,7 @@ pub fn register_background_shell_task(command: &str, pid: i32, cwd: &str) -> Bac
 /// 列出所有后台任务并同步刷新其状态。
 pub fn list_background_tasks() -> Vec<BackgroundTaskResult> {
     let mut output = Vec::new();
-    if let Ok(mut tasks) = task_store().try_lock() {
+    if let Ok(mut tasks) = STORE.try_lock() {
         let ids = tasks.keys().cloned().collect::<Vec<_>>();
         for id in ids {
             if let Some(record) = tasks.get(&id).cloned() {
@@ -96,7 +93,7 @@ pub fn list_background_tasks() -> Vec<BackgroundTaskResult> {
 #[allow(dead_code)]
 /// 查询单个后台任务状态。
 pub fn get_background_task(task_id: &str) -> Option<BackgroundTaskResult> {
-    if let Ok(mut tasks) = task_store().try_lock() {
+    if let Ok(mut tasks) = STORE.try_lock() {
         let record = tasks.get(task_id).cloned()?;
         let refreshed = refresh_status(record);
         tasks.insert(task_id.to_string(), refreshed.clone());
@@ -108,7 +105,7 @@ pub fn get_background_task(task_id: &str) -> Option<BackgroundTaskResult> {
 #[allow(dead_code)]
 /// 查询后台任务的启动目录。
 pub fn get_background_task_cwd(task_id: &str) -> Option<String> {
-    if let Ok(tasks) = task_store().try_lock() {
+    if let Ok(tasks) = STORE.try_lock() {
         return tasks.get(task_id).map(|x| x.cwd.clone());
     }
     None

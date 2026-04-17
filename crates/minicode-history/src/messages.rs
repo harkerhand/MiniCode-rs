@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -94,10 +94,9 @@ pub fn append_runtime_message(message: ChatMessage) {
     persist_runtime_messages(&persisted);
 }
 
-static MESSAGES: OnceLock<Arc<Mutex<Vec<ChatMessage>>>> = OnceLock::new();
+static MESSAGES: LazyLock<Arc<Mutex<Vec<ChatMessage>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(load_runtime_messages_from_file())));
 
 pub fn get_messages() -> Arc<Mutex<Vec<ChatMessage>>> {
-    MESSAGES
-        .get_or_init(|| Arc::new(Mutex::new(load_runtime_messages_from_file())))
-        .clone()
+    MESSAGES.clone()
 }

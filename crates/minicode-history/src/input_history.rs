@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock};
 use std::{fs, sync::Mutex};
 
 use anyhow::Result;
@@ -86,10 +86,9 @@ pub fn load_input_history_from_file() -> Vec<String> {
     history.entries
 }
 
-static INPUT_HISTORY: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
+static INPUT_HISTORY: LazyLock<Arc<Mutex<Vec<String>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(load_input_history_from_file())));
 
 pub fn get_input_history() -> Arc<Mutex<Vec<String>>> {
-    INPUT_HISTORY
-        .get_or_init(|| Arc::new(Mutex::new(load_input_history_from_file())))
-        .clone()
+    INPUT_HISTORY.clone()
 }
