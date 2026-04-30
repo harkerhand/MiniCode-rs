@@ -71,17 +71,21 @@ pub(crate) fn render_screen(
         let session_inner_width = chunks[1].width.saturating_sub(2) as usize;
         let mut session_render = session_lines(state, session_inner_width);
 
-        // 流式输出：追加正在生成中的文本
+        // 流式输出：追加到 transcript 末尾，不额外标 "Streaming"
         if !state.stream_text.is_empty() {
             session_render.lines.push(Line::from(""));
             session_render.lines.push(Line::from(vec![
-                Span::styled("▌ ", theme.header_label_session_style()),
-                Span::styled("Streaming...", theme.header_label_session_style()),
+                Span::styled("▌", theme.assistant_style()),
+                Span::raw(" "),
+                Span::styled(
+                    "assistant",
+                    theme.assistant_style().add_modifier(Modifier::BOLD),
+                ),
             ]));
             for line in state.stream_text.lines() {
                 session_render
                     .lines
-                    .push(Line::from(Span::raw(line.to_string())));
+                    .push(Line::from(vec![Span::raw("  "), Span::raw(line.to_string())]));
             }
         }
         let feed_line_count = session_render.lines.len();

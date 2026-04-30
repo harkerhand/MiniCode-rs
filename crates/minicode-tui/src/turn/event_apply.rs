@@ -33,6 +33,7 @@ pub(crate) fn apply_turn_event(state: &mut ScreenState, event: TurnEvent) -> boo
             false
         }
         TurnEvent::Assistant(content) => {
+            state.stream_text.clear(); // 完整消息已到，清除流式残影
             let _ = content;
             false
         }

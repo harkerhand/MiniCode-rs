@@ -577,14 +577,12 @@ impl ModelAdapter for AnthropicModelAdapter {
             return Err(anyhow!("流式请求失败: {resp_status} {text}"));
         }
 
-        // 解析 SSE 流
+        // 解析 SSE 流——只负责文本展示
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buf = String::new();
-        let mut text_parts: Vec<String> = vec![];
-        let mut stop_reason: Option<String> = None;
-        let mut block_types: Vec<String> = vec![];
-        let mut ignored_block_types: Vec<String> = vec![];
+        let mut streamed_text = String::new();
+        let mut has_tool_use = false;
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
@@ -599,10 +597,7 @@ impl ModelAdapter for AnthropicModelAdapter {
                     continue;
                 }
 
-                let data = line
-                    .strip_prefix("data: ")
-                    .unwrap_or(&line);
-
+                let data = line.strip_prefix("data: ").unwrap_or(&line);
                 if data == "[DONE]" {
                     continue;
                 }
@@ -611,63 +606,38 @@ impl ModelAdapter for AnthropicModelAdapter {
                     continue;
                 };
 
-                match event
+                let event_type = event
                     .get("type")
                     .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                {
+                    .unwrap_or("");
+
+                match event_type {
                     "content_block_start" => {
-                        if let Some(bt) = event
+                        let bt = event
                             .get("content_block")
                             .and_then(|c| c.get("type"))
                             .and_then(|t| t.as_str())
-                        {
-                            block_types.push(bt.to_string());
+                            .unwrap_or("");
+                        if bt == "tool_use" {
+                            has_tool_use = true;
                         }
                     }
                     "content_block_delta" => {
-                        if let Some(delta) = event.get("delta") {
-                            if delta
-                                .get("type")
-                                .and_then(|t| t.as_str())
-                                == Some("text_delta")
+                        let delta = event.get("delta");
+                        let dt = delta
+                            .and_then(|d| d.get("type"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("");
+                        if dt == "text_delta" {
+                            if let Some(txt) =
+                                delta.and_then(|d| d.get("text")).and_then(|t| t.as_str())
                             {
-                                if let Some(txt) =
-                                    delta.get("text").and_then(|t| t.as_str())
-                                {
-                                    text_parts.push(txt.to_string());
-                                    on_chunk(txt.to_string(), false).await;
-                                }
-                            } else if delta
-                                .get("type")
-                                .and_then(|t| t.as_str())
-                                == Some("input_json_delta")
-                            {
-                                // 累积 tool_use 的部分 JSON
+                                streamed_text.push_str(txt);
+                                on_chunk(txt.to_string(), false).await;
                             }
                         }
                     }
-                    "content_block_stop" => {}
-                    "message_delta" => {
-                        if let Some(delta) = event.get("delta") {
-                            if let Some(sr) = delta
-                                .get("stop_reason")
-                                .and_then(|s| s.as_str())
-                            {
-                                stop_reason = Some(sr.to_string());
-                            }
-                        }
-                    }
-                    "message_stop" => {}
-                    _ => {
-                        ignored_block_types.push(
-                            event
-                                .get("type")
-                                .and_then(|t| t.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                        );
-                    }
+                    _ => {}
                 }
             }
         }
@@ -675,27 +645,17 @@ impl ModelAdapter for AnthropicModelAdapter {
         // 通知流式结束
         on_chunk(String::new(), true).await;
 
-        let all_text = text_parts.join("");
-        let (content, kind) = Self::parse_assistant_text(&all_text);
+        // 流式只负责纯文本展示。若涉及 tool_use 或 thinking（无文本输出），
+        // 回退到非流式 next() 获取完整的结构化响应。
+        if has_tool_use || streamed_text.trim().is_empty() {
+            return self.next(messages).await;
+        }
 
-        let diagnostics = Some(StepDiagnostics {
-            stop_reason,
-            block_types: if block_types.is_empty() {
-                None
-            } else {
-                Some(block_types)
-            },
-            ignored_block_types: if ignored_block_types.is_empty() {
-                None
-            } else {
-                Some(ignored_block_types)
-            },
-        });
-
+        let (content, kind) = Self::parse_assistant_text(&streamed_text);
         Ok(AgentStep::Assistant {
             content,
             kind,
-            diagnostics,
+            diagnostics: None,
         })
     }
 }

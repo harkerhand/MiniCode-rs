@@ -206,19 +206,16 @@ pub(crate) async fn handle_submit(
     loop {
         let mut turn_done = false;
         while !turn_done {
+            // 先处理流式事件，确保文本块在 Assistant/Done 之前更新
+            while let Ok((delta, is_final)) = stream_rx.try_recv() {
+                let _ = apply_turn_event(state, TurnEvent::StreamDelta(delta, is_final));
+            }
             while let Ok(event) = rx.try_recv() {
                 if matches!(event, TurnEvent::ToolResult { .. }) {
                     flush_queued_busy_inputs(state);
                 }
                 if apply_turn_event(state, event) {
                     turn_done = true;
-                    break;
-                }
-            }
-            // 处理流式事件
-            while let Ok((delta, is_final)) = stream_rx.try_recv() {
-                let _ = apply_turn_event(state, TurnEvent::StreamDelta(delta, is_final));
-                if is_final {
                     break;
                 }
             }
