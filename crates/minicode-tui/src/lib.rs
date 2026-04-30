@@ -32,7 +32,9 @@ use input::{
 };
 use render::render_screen;
 use state::ScreenState;
-use turn::{handle_approval_key, handle_submit};
+use turn::{AskUserAction, handle_approval_key, handle_ask_user_key, handle_submit};
+
+const UI_IDLE_POLL_MS: u64 = 33;
 
 struct TerminalGuard;
 
@@ -92,7 +94,7 @@ pub async fn run_tui_app() -> Result<()> {
         state.context_tokens_estimate = estimate_context_tokens(&runtime_messages());
         render_screen(&mut terminal, &mut state)?;
 
-        if event::poll(Duration::from_millis(150))? {
+        if event::poll(Duration::from_millis(UI_IDLE_POLL_MS))? {
             match event::read()? {
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => {
@@ -127,6 +129,33 @@ pub async fn run_tui_app() -> Result<()> {
                     }
                     if state.pending_approval.is_some() {
                         let _ = handle_approval_key(&mut state, key);
+                        continue;
+                    }
+                    if state.pending_ask_user.is_some() {
+                        match handle_ask_user_key(&mut state, key) {
+                            AskUserAction::Submit(submitted) => {
+                                match handle_submit(&mut terminal, &mut state, submitted).await {
+                                    Ok(exit) => should_exit = exit,
+                                    Err(err) => {
+                                        append_runtime_message(ChatMessage::Assistant {
+                                            content: format!("submit failed: {err:#}"),
+                                        });
+                                        state.status = Some("Error".to_string());
+                                        state.is_busy = false;
+                                        state.active_tool = None;
+                                        state.pending_approval = None;
+                                        state.pending_ask_user = None;
+                                        state.transcript_scroll_offset = 0;
+                                    }
+                                }
+                                state.message_count = runtime_messages_count();
+                                state.turn_count += 1;
+                            }
+                            AskUserAction::Cancelled => {
+                                state.status = Some("Ready".to_string());
+                            }
+                            AskUserAction::Handled | AskUserAction::None => {}
+                        }
                         continue;
                     }
 
@@ -173,6 +202,7 @@ pub async fn run_tui_app() -> Result<()> {
                                     state.is_busy = false;
                                     state.active_tool = None;
                                     state.pending_approval = None;
+                                    state.pending_ask_user = None;
                                     state.transcript_scroll_offset = 0;
                                 }
                             }
@@ -341,7 +371,7 @@ pub async fn run_tui_app() -> Result<()> {
                     }
                 }
                 Event::Paste(text) => {
-                    if state.is_busy || state.pending_approval.is_some() {
+                    if state.is_busy || state.pending_approval.is_some() || state.pending_ask_user.is_some() {
                         continue;
                     }
                     // 多行粘贴：将换行符保持为文本，而非提交键

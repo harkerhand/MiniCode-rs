@@ -13,12 +13,14 @@ use crate::state::ScreenState;
 use crate::theme::theme;
 
 mod approval;
+mod ask_user;
 mod header;
 mod markdown;
 mod transcript;
 mod ui_utils;
 
 use approval::build_approval_lines;
+use ask_user::build_ask_user_lines;
 use header::build_header_lines;
 use transcript::session_lines;
 use ui_utils::{centered_rect, sanitize_line, wrap_input_view};
@@ -234,7 +236,21 @@ pub(crate) fn render_screen(
         let cursor_y = (prompt_area.y + 1 + cursor_row as u16)
             .min(prompt_area.y + prompt_area.height.saturating_sub(2));
 
-        if let Some(pending) = &state.pending_approval {
+        if let Some(pending) = &state.pending_ask_user {
+            let popup = centered_rect(70, 40, area);
+            frame.render_widget(Clear, popup);
+            let lines = build_ask_user_lines(pending);
+            let dialog = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title(" Ask User ")
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .style(theme.approval_style()),
+                )
+                .wrap(Wrap { trim: true });
+            frame.render_widget(dialog, popup);
+        } else if let Some(pending) = &state.pending_approval {
             let popup = centered_rect(70, 45, area);
             frame.render_widget(Clear, popup);
             let lines = build_approval_lines(pending);

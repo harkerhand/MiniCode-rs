@@ -1,7 +1,7 @@
 use minicode_history::append_runtime_message;
 use minicode_types::ChatMessage;
 
-use crate::state::{PendingApproval, ScreenState, TurnEvent};
+use crate::state::{PendingApproval, PendingAskUser, ScreenState, TurnEvent};
 
 /// 为工具输入生成便于展示的简短摘要。
 fn summarize_tool_input(tool_name: &str, input: &serde_json::Value) -> String {
@@ -18,6 +18,8 @@ fn summarize_tool_input(tool_name: &str, input: &serde_json::Value) -> String {
 pub(crate) fn apply_turn_event(state: &mut ScreenState, event: TurnEvent) -> bool {
     match event {
         TurnEvent::ToolStart { tool_name, input } => {
+            state.stream_text.clear();
+            state.stream_frozen = true;
             state.active_tool = Some(tool_name.clone());
             state.status = Some(format!("Running {tool_name}..."));
             let _ = summarize_tool_input(&tool_name, &input);
@@ -33,7 +35,8 @@ pub(crate) fn apply_turn_event(state: &mut ScreenState, event: TurnEvent) -> boo
             false
         }
         TurnEvent::Assistant(content) => {
-            state.stream_text.clear(); // 完整消息已到，清除流式残影
+            state.stream_text.clear(); // 完整消息已入库后再到这里，清除流式残影
+            state.stream_frozen = true;
             let _ = content;
             false
         }
@@ -56,11 +59,31 @@ pub(crate) fn apply_turn_event(state: &mut ScreenState, event: TurnEvent) -> boo
             state.status = Some(text);
             false
         }
+        TurnEvent::AskUserPrompt { question, options } => {
+            state.pending_ask_user = Some(PendingAskUser {
+                question,
+                options,
+                selected_index: 0,
+            });
+            state.status = Some("Ask user...".to_string());
+            false
+        }
         TurnEvent::StreamDelta(delta, is_final) => {
+            if state.stream_frozen {
+                return false;
+            }
             if is_final {
-                state.stream_text.clear();
+                // final 只表示流结束，不在这里清空，避免“先回退再出现最终文本”
             } else {
-                state.stream_text.push_str(&delta);
+                // 兼容两类 provider：
+                // 1) delta 增量；2) cumulative 全量片段。
+                if state.stream_text.is_empty() {
+                    state.stream_text.push_str(&delta);
+                } else if delta.starts_with(&state.stream_text) {
+                    state.stream_text = delta;
+                } else {
+                    state.stream_text.push_str(&delta);
+                }
             }
             false
         }
@@ -82,6 +105,10 @@ pub(crate) fn apply_turn_event(state: &mut ScreenState, event: TurnEvent) -> boo
             state.status = None;
             false
         }
-        TurnEvent::Done => true,
+        TurnEvent::Done => {
+            state.stream_text.clear();
+            state.stream_frozen = true;
+            true
+        }
     }
 }

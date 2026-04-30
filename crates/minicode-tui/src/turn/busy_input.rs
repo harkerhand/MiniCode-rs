@@ -6,6 +6,7 @@ use crate::input::{
 };
 use crate::state::ScreenState;
 use crate::turn::approval::handle_approval_key;
+use crate::turn::ask_user::{AskUserAction, handle_ask_user_key};
 
 pub(crate) enum BusyEventAction {
     None,
@@ -42,6 +43,14 @@ pub(crate) fn handle_busy_event(state: &mut ScreenState, event: Event) -> BusyEv
 
             if state.pending_approval.is_some() && handle_approval_key(state, key) {
                 return BusyEventAction::None;
+            }
+            if state.pending_ask_user.is_some() {
+                match handle_ask_user_key(state, key) {
+                    AskUserAction::Handled
+                    | AskUserAction::Cancelled
+                    | AskUserAction::None => return BusyEventAction::None,
+                    AskUserAction::Submit(submitted) => return BusyEventAction::Submit(submitted),
+                }
             }
 
             let visible_commands = get_visible_commands(&state.input);

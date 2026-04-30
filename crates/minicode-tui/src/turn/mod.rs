@@ -20,14 +20,18 @@ use crate::render::render_screen;
 use crate::state::{ChannelCallbacks, ScreenState, TurnEvent};
 
 mod approval;
+mod ask_user;
 mod busy_input;
 mod event_apply;
 mod prompt_handler;
 
 pub(crate) use approval::handle_approval_key;
+pub(crate) use ask_user::{AskUserAction, handle_ask_user_key};
 use busy_input::{BusyEventAction, handle_busy_event};
 use event_apply::apply_turn_event;
 use prompt_handler::build_prompt_handler;
+
+const UI_POLL_MS: u64 = 16;
 
 async fn handle_command_submission(state: &mut ScreenState, input: &str) {
     append_runtime_message(ChatMessage::runtime_display(
@@ -141,18 +145,22 @@ pub(crate) async fn handle_submit(
 
         let mut tool_done = false;
         while state.is_busy {
+            let mut updated = false;
             while let Ok(event) = rx.try_recv() {
                 if matches!(event, TurnEvent::ToolDone(_)) {
                     tool_done = true;
                 }
                 let _ = apply_turn_event(state, event);
+                updated = true;
                 if tool_done {
                     flush_queued_busy_inputs(state);
                     state.is_busy = false;
                 }
             }
-            render_screen(terminal, state)?;
-            if event::poll(Duration::from_millis(60))? {
+            if updated {
+                render_screen(terminal, state)?;
+            }
+            if event::poll(Duration::from_millis(UI_POLL_MS))? {
                 let input_event = event::read()?;
                 match handle_busy_event(state, input_event) {
                     BusyEventAction::None => {}
@@ -167,6 +175,7 @@ pub(crate) async fn handle_submit(
                         state.is_busy = false;
                     }
                 }
+                render_screen(terminal, state)?;
             }
         }
         flush_queued_busy_inputs(state);
@@ -187,6 +196,8 @@ pub(crate) async fn handle_submit(
     permission_manager.begin_turn();
     state.status = Some("Thinking...".to_string());
     state.is_busy = true;
+    state.stream_text.clear();
+    state.stream_frozen = false;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
     permission_manager
@@ -195,6 +206,12 @@ pub(crate) async fn handle_submit(
     let model = get_model_adapter();
 
     let (stream_tx, mut stream_rx) = mpsc::unbounded_channel::<(String, bool)>();
+    let forward_tx = tx.clone();
+    tokio::spawn(async move {
+        while let Some((delta, is_final)) = stream_rx.recv().await {
+            let _ = forward_tx.send(TurnEvent::StreamDelta(delta, is_final));
+        }
+    });
     let mut task = tokio::spawn(async move {
         let mut callbacks = ChannelCallbacks { tx: tx.clone() };
         run_agent_turn_streaming(model.as_ref(), None, Some(&mut callbacks), Some(stream_tx))
@@ -206,10 +223,7 @@ pub(crate) async fn handle_submit(
     loop {
         let mut turn_done = false;
         while !turn_done {
-            // 先处理流式事件，确保文本块在 Assistant/Done 之前更新
-            while let Ok((delta, is_final)) = stream_rx.try_recv() {
-                let _ = apply_turn_event(state, TurnEvent::StreamDelta(delta, is_final));
-            }
+            let mut updated = false;
             while let Ok(event) = rx.try_recv() {
                 if matches!(event, TurnEvent::ToolResult { .. }) {
                     flush_queued_busy_inputs(state);
@@ -218,11 +232,14 @@ pub(crate) async fn handle_submit(
                     turn_done = true;
                     break;
                 }
+                updated = true;
             }
 
-            render_screen(terminal, state)?;
+            if updated {
+                render_screen(terminal, state)?;
+            }
 
-            if !turn_done && event::poll(Duration::from_millis(60))? {
+            if !turn_done && event::poll(Duration::from_millis(UI_POLL_MS))? {
                 let input_event = event::read()?;
                 match handle_busy_event(state, input_event) {
                     BusyEventAction::None => {}
@@ -237,6 +254,7 @@ pub(crate) async fn handle_submit(
                         turn_done = true;
                     }
                 }
+                render_screen(terminal, state)?;
             }
         }
         flush_queued_busy_inputs(state);
@@ -248,6 +266,13 @@ pub(crate) async fn handle_submit(
         // 有排队输入，自动发起新回合
         let (new_tx, new_rx) = mpsc::unbounded_channel::<TurnEvent>();
         let (new_stream_tx, new_stream_rx) = mpsc::unbounded_channel::<(String, bool)>();
+        let new_forward_tx = new_tx.clone();
+        tokio::spawn(async move {
+            let mut new_stream_rx = new_stream_rx;
+            while let Some((delta, is_final)) = new_stream_rx.recv().await {
+                let _ = new_forward_tx.send(TurnEvent::StreamDelta(delta, is_final));
+            }
+        });
         permission_manager
             .set_prompt_handler(build_prompt_handler(new_tx.clone()))
             .await;
@@ -265,8 +290,9 @@ pub(crate) async fn handle_submit(
         });
         task = new_task;
         rx = new_rx;
-        stream_rx = new_stream_rx;
         state.status = Some("Thinking...".to_string());
+        state.stream_text.clear();
+        state.stream_frozen = false;
     }
 
     let done = runtime_messages();

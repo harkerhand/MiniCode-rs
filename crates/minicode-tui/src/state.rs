@@ -13,6 +13,12 @@ pub(crate) struct PendingApproval {
     pub(crate) feedback: String,
 }
 
+pub(crate) struct PendingAskUser {
+    pub(crate) question: String,
+    pub(crate) options: Vec<String>,
+    pub(crate) selected_index: usize,
+}
+
 pub(crate) enum TurnEvent {
     ToolStart {
         tool_name: String,
@@ -27,6 +33,10 @@ pub(crate) enum TurnEvent {
     StreamDelta(String, bool),
     /// 更新状态栏文字
     Status(String),
+    AskUserPrompt {
+        question: String,
+        options: Vec<String>,
+    },
     Assistant(String),
     Progress(String),
     Approval {
@@ -55,11 +65,14 @@ pub(crate) struct ScreenState {
     pub(crate) is_busy: bool,
     pub(crate) message_count: usize,
     pub(crate) pending_approval: Option<PendingApproval>,
+    pub(crate) pending_ask_user: Option<PendingAskUser>,
     pub(crate) turn_count: usize,
     pub(crate) context_tokens_estimate: usize,
     pub(crate) queued_busy_inputs: Vec<String>,
     /// 流式输出累积文本
     pub(crate) stream_text: String,
+    /// 为防止乱序回退：最终消息落地后冻结流式增量，忽略迟到 chunk
+    pub(crate) stream_frozen: bool,
 }
 
 pub(crate) struct ChannelCallbacks {
@@ -116,5 +129,12 @@ impl AgentTurnCallbacks for ChannelCallbacks {
         let _ = self
             .tx
             .send(TurnEvent::StreamDelta(delta.to_string(), is_final));
+    }
+
+    fn on_ask_user_prompt(&mut self, question: &str, options: &[String]) {
+        let _ = self.tx.send(TurnEvent::AskUserPrompt {
+            question: question.to_string(),
+            options: options.to_vec(),
+        });
     }
 }

@@ -23,6 +23,26 @@ pub trait AgentTurnCallbacks: Send {
     fn on_compact_start(&mut self) {}
     /// 流式输出文本块时触发。
     fn on_stream_chunk(&mut self, _delta: &str, _is_final: bool) {}
+    /// ask_user 工具请求用户选择时触发。
+    fn on_ask_user_prompt(&mut self, _question: &str, _options: &[String]) {}
+}
+
+fn parse_ask_user_payload(output: &str) -> Option<(String, Vec<String>)> {
+    let v = serde_json::from_str::<serde_json::Value>(output).ok()?;
+    let question = v.get("question")?.as_str()?.to_string();
+    let options = v
+        .get("options")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(ToString::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if question.trim().is_empty() || options.is_empty() {
+        return None;
+    }
+    Some((question, options))
 }
 
 /// 判断助手回复是否为空白内容。
@@ -114,12 +134,13 @@ pub async fn run_agent_turn(
         let next = match model.next(&get_messages_with_system()).await {
             Ok(step) => step,
             Err(err) => {
-                if let Some(cb) = callbacks.as_deref_mut() {
-                    cb.on_assistant_message(&format!("请求失败: {err}"));
-                }
+                let text = format!("请求失败: {err}");
                 append_runtime_message(ChatMessage::Assistant {
-                    content: format!("请求失败: {err}"),
+                    content: text.clone(),
                 });
+                if let Some(cb) = callbacks.as_deref_mut() {
+                    cb.on_assistant_message(&text);
+                }
                 return;
             }
         };
@@ -133,12 +154,12 @@ pub async fn run_agent_turn(
                 let is_empty = is_empty_assistant_response(&content);
 
                 if !is_empty && kind.as_deref() == Some("progress") {
-                    if let Some(cb) = callbacks.as_deref_mut() {
-                        cb.on_progress_message(&content);
-                    }
                     append_runtime_message(ChatMessage::AssistantProgress {
                         content: content.clone(),
                     });
+                    if let Some(cb) = callbacks.as_deref_mut() {
+                        cb.on_progress_message(&content);
+                    }
                     append_runtime_message(ChatMessage::Minicode {
                         content: "继续，紧接着上一条进度消息执行。请给出下一步具体工具调用、代码修改，或在任务确实完成时给出最终答案。".to_string(),
                     });
@@ -163,12 +184,12 @@ pub async fn run_agent_turn(
                         } else {
                             "模型返回 pause_turn，正在继续请求后续步骤...".to_string()
                         };
+                        append_runtime_message(ChatMessage::AssistantProgress {
+                            content: progress.clone(),
+                        });
                         if let Some(cb) = callbacks.as_deref_mut() {
                             cb.on_progress_message(&progress);
                         }
-                        append_runtime_message(ChatMessage::AssistantProgress {
-                            content: progress,
-                        });
                         append_runtime_message(ChatMessage::Minicode {
                             content: "继续，从你刚才中断的位置直接执行下一步，给出具体工具调用或代码修改。".to_string(),
                         });
@@ -208,17 +229,21 @@ pub async fn run_agent_turn(
                     } else {
                         format!("模型返回空响应，已停止当前回合。请重试。{diag}")
                     };
+                    append_runtime_message(ChatMessage::Assistant {
+                        content: fallback.clone(),
+                    });
                     if let Some(cb) = callbacks.as_deref_mut() {
                         cb.on_assistant_message(&fallback);
                     }
-                    append_runtime_message(ChatMessage::Assistant { content: fallback });
                     return;
                 }
 
+                append_runtime_message(ChatMessage::Assistant {
+                    content: content.clone(),
+                });
                 if let Some(cb) = callbacks.as_deref_mut() {
                     cb.on_assistant_message(&content);
                 }
-                append_runtime_message(ChatMessage::Assistant { content });
                 return;
             }
             AgentStep::ToolCalls {
@@ -231,18 +256,20 @@ pub async fn run_agent_turn(
                     content.is_some() && content_kind.as_deref() != Some("progress");
                 if let Some(c) = content {
                     if content_kind.as_deref() == Some("progress") {
+                        append_runtime_message(ChatMessage::AssistantProgress {
+                            content: c.clone(),
+                        });
                         if let Some(cb) = callbacks.as_deref_mut() {
                             cb.on_progress_message(&c);
                         }
-                        append_runtime_message(ChatMessage::AssistantProgress { content: c });
                         append_runtime_message(ChatMessage::Minicode {
                             content: "继续，给出下一步工具调用或最终答案。".to_string(),
                         });
                     } else {
+                        append_runtime_message(ChatMessage::Assistant { content: c.clone() });
                         if let Some(cb) = callbacks.as_deref_mut() {
                             cb.on_assistant_message(&c);
                         }
-                        append_runtime_message(ChatMessage::Assistant { content: c });
                     }
                 }
 
@@ -281,14 +308,20 @@ pub async fn run_agent_turn(
                     });
 
                     if result.await_user {
-                        let question = result.output.trim();
-                        if !question.is_empty() {
+                        if let Some((question, options)) = parse_ask_user_payload(&result.output) {
                             if let Some(cb) = callbacks.as_deref_mut() {
-                                cb.on_assistant_message(question);
+                                cb.on_ask_user_prompt(&question, &options);
                             }
-                            append_runtime_message(ChatMessage::Assistant {
-                                content: question.to_string(),
-                            });
+                        } else {
+                            let question = result.output.trim();
+                            if !question.is_empty() {
+                                append_runtime_message(ChatMessage::Assistant {
+                                    content: question.to_string(),
+                                });
+                                if let Some(cb) = callbacks.as_deref_mut() {
+                                    cb.on_assistant_message(question);
+                                }
+                            }
                         }
                         return;
                     }
@@ -297,16 +330,15 @@ pub async fn run_agent_turn(
         }
     }
 
-    if let Some(cb) = callbacks {
-        cb.on_assistant_message("达到最大工具步数限制，已停止当前回合。");
-    }
     append_runtime_message(ChatMessage::Assistant {
         content: "达到最大工具步数限制，已停止当前回合。".to_string(),
     });
+    if let Some(cb) = callbacks {
+        cb.on_assistant_message("达到最大工具步数限制，已停止当前回合。");
+    }
 }
 
 /// 流式执行一轮 agent 对话，实时推送文本增量到 UI。
-/// 额外接受一个 `stream_tx` 用于发送 `StreamDelta` 事件。
 pub async fn run_agent_turn_streaming(
     model: &dyn ModelAdapter,
     max_steps: Option<usize>,
@@ -373,12 +405,13 @@ pub async fn run_agent_turn_streaming(
         let next = match stream_result {
             Ok(step) => step,
             Err(err) => {
-                if let Some(cb) = callbacks.as_deref_mut() {
-                    cb.on_assistant_message(&format!("请求失败: {err}"));
-                }
+                let text = format!("请求失败: {err}");
                 append_runtime_message(ChatMessage::Assistant {
-                    content: format!("请求失败: {err}"),
+                    content: text.clone(),
                 });
+                if let Some(cb) = callbacks.as_deref_mut() {
+                    cb.on_assistant_message(&text);
+                }
                 return;
             }
         };
@@ -392,12 +425,12 @@ pub async fn run_agent_turn_streaming(
                 let is_empty = content.trim().is_empty();
 
                 if !is_empty && kind.as_deref() == Some("progress") {
-                    if let Some(cb) = callbacks.as_deref_mut() {
-                        cb.on_progress_message(&content);
-                    }
                     append_runtime_message(ChatMessage::AssistantProgress {
                         content: content.clone(),
                     });
+                    if let Some(cb) = callbacks.as_deref_mut() {
+                        cb.on_progress_message(&content);
+                    }
                     append_runtime_message(ChatMessage::Minicode {
                         content: "继续，紧接着上一条进度消息执行。请给出下一步具体工具调用、代码修改，或在任务确实完成时给出最终答案。".to_string(),
                     });
@@ -423,12 +456,12 @@ pub async fn run_agent_turn_streaming(
                         } else {
                             "模型返回 pause_turn，正在继续请求后续步骤...".to_string()
                         };
+                        append_runtime_message(ChatMessage::AssistantProgress {
+                            content: progress.clone(),
+                        });
                         if let Some(cb) = callbacks.as_deref_mut() {
                             cb.on_progress_message(&progress);
                         }
-                        append_runtime_message(ChatMessage::AssistantProgress {
-                            content: progress,
-                        });
                         append_runtime_message(ChatMessage::Minicode {
                             content: "继续，从你刚才中断的位置直接执行下一步，给出具体工具调用或代码修改。"
                                 .to_string(),
@@ -467,19 +500,21 @@ pub async fn run_agent_turn_streaming(
                     } else {
                         format!("模型返回空响应，已停止当前回合。请重试。{diag}")
                     };
+                    append_runtime_message(ChatMessage::Assistant {
+                        content: fallback.clone(),
+                    });
                     if let Some(cb) = callbacks.as_deref_mut() {
                         cb.on_assistant_message(&fallback);
                     }
-                    append_runtime_message(ChatMessage::Assistant {
-                        content: fallback,
-                    });
                     return;
                 }
 
+                append_runtime_message(ChatMessage::Assistant {
+                    content: content.clone(),
+                });
                 if let Some(cb) = callbacks.as_deref_mut() {
                     cb.on_assistant_message(&content);
                 }
-                append_runtime_message(ChatMessage::Assistant { content });
                 return;
             }
             AgentStep::ToolCalls {
@@ -492,18 +527,20 @@ pub async fn run_agent_turn_streaming(
                     content.is_some() && content_kind.as_deref() != Some("progress");
                 if let Some(c) = content {
                     if content_kind.as_deref() == Some("progress") {
+                        append_runtime_message(ChatMessage::AssistantProgress {
+                            content: c.clone(),
+                        });
                         if let Some(cb) = callbacks.as_deref_mut() {
                             cb.on_progress_message(&c);
                         }
-                        append_runtime_message(ChatMessage::AssistantProgress { content: c });
                         append_runtime_message(ChatMessage::Minicode {
                             content: "继续，给出下一步工具调用或最终答案。".to_string(),
                         });
                     } else {
+                        append_runtime_message(ChatMessage::Assistant { content: c.clone() });
                         if let Some(cb) = callbacks.as_deref_mut() {
                             cb.on_assistant_message(&c);
                         }
-                        append_runtime_message(ChatMessage::Assistant { content: c });
                     }
                 }
 
@@ -542,14 +579,20 @@ pub async fn run_agent_turn_streaming(
                     });
 
                     if result.await_user {
-                        let question = result.output.trim();
-                        if !question.is_empty() {
+                        if let Some((question, options)) = parse_ask_user_payload(&result.output) {
                             if let Some(cb) = callbacks.as_deref_mut() {
-                                cb.on_assistant_message(question);
+                                cb.on_ask_user_prompt(&question, &options);
                             }
-                            append_runtime_message(ChatMessage::Assistant {
-                                content: question.to_string(),
-                            });
+                        } else {
+                            let question = result.output.trim();
+                            if !question.is_empty() {
+                                append_runtime_message(ChatMessage::Assistant {
+                                    content: question.to_string(),
+                                });
+                                if let Some(cb) = callbacks.as_deref_mut() {
+                                    cb.on_assistant_message(question);
+                                }
+                            }
                         }
                         return;
                     }
@@ -558,12 +601,12 @@ pub async fn run_agent_turn_streaming(
         }
     }
 
-    if let Some(cb) = callbacks {
-        cb.on_assistant_message("达到最大工具步数限制，已停止当前回合。");
-    }
     append_runtime_message(ChatMessage::Assistant {
         content: "达到最大工具步数限制，已停止当前回合。".to_string(),
     });
+    if let Some(cb) = callbacks {
+        cb.on_assistant_message("达到最大工具步数限制，已停止当前回合。");
+    }
 }
 
 fn get_messages_with_system() -> Vec<ChatMessage> {
