@@ -134,7 +134,46 @@ impl ColorTheme {
             .fg(self.header_label_permissions)
             .add_modifier(Modifier::BOLD)
     }
+
+    // --- Markdown 渲染样式 ---
+    pub fn code_inline_style(&self) -> Style {
+        Style::default()
+            .fg(Color::Rgb(200, 180, 120))
+            .bg(Color::Rgb(40, 40, 40))
+    }
+    pub fn code_block_style(&self) -> Style {
+        Style::default().fg(Color::Rgb(180, 190, 200))
+    }
+    pub fn code_block_header_style(&self) -> Style {
+        Style::default()
+            .fg(Color::Rgb(100, 100, 100))
+            .add_modifier(Modifier::BOLD)
+    }
+    pub fn heading1_style(&self) -> Style {
+        Style::default()
+            .fg(self.user)
+            .add_modifier(Modifier::BOLD)
+    }
+    pub fn heading2_style(&self) -> Style {
+        Style::default()
+            .fg(self.assistant)
+            .add_modifier(Modifier::BOLD)
+    }
+    pub fn heading3_style(&self) -> Style {
+        Style::default()
+            .fg(self.progress)
+            .add_modifier(Modifier::BOLD)
+    }
+    pub fn bold_style(&self) -> Style {
+        Style::default().add_modifier(Modifier::BOLD)
+    }
+    pub fn italic_style(&self) -> Style {
+        Style::default().add_modifier(Modifier::ITALIC)
+    }
 }
+
+/// Theme 类型别名，供 markdown 模块引用
+pub type Theme = ColorTheme;
 
 /// Global theme instance
 pub fn theme() -> ColorTheme {

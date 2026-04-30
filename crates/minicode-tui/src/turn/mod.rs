@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{self};
-use minicode_agent_core::run_agent_turn;
+use minicode_agent_core::run_agent_turn_streaming;
 use minicode_cli_commands::{find_matching_slash_commands, try_handle_local_command};
 use minicode_history::{
     add_history_entry, append_runtime_message, estimate_context_tokens, load_history_entries,
@@ -194,44 +194,83 @@ pub(crate) async fn handle_submit(
         .await;
     let model = get_model_adapter();
 
-    let task = tokio::spawn(async move {
+    let (stream_tx, mut stream_rx) = mpsc::unbounded_channel::<(String, bool)>();
+    let mut task = tokio::spawn(async move {
         let mut callbacks = ChannelCallbacks { tx: tx.clone() };
-        run_agent_turn(model.as_ref(), None, Some(&mut callbacks)).await;
+        run_agent_turn_streaming(model.as_ref(), None, Some(&mut callbacks), Some(stream_tx))
+            .await;
         let _ = tx.send(TurnEvent::Done);
     });
 
-    let mut turn_done = false;
-    while !turn_done {
-        while let Ok(event) = rx.try_recv() {
-            if matches!(event, TurnEvent::ToolResult { .. }) {
-                flush_queued_busy_inputs(state);
-            }
-            if apply_turn_event(state, event) {
-                turn_done = true;
-                break;
-            }
-        }
-
-        render_screen(terminal, state)?;
-
-        if !turn_done && event::poll(Duration::from_millis(60))? {
-            let input_event = event::read()?;
-            match handle_busy_event(state, input_event) {
-                BusyEventAction::None => {}
-                BusyEventAction::Submit(raw) => queue_busy_submission(state, raw).await,
-                BusyEventAction::Interrupt => {
-                    task.abort();
-                    append_runtime_message(ChatMessage::runtime_display(
-                        "command:error",
-                        "已中断当前轮次。",
-                    ));
-                    state.transcript_scroll_offset = 0;
+    // 循环处理：如果回合结束后有排队输入，自动发起新回合
+    loop {
+        let mut turn_done = false;
+        while !turn_done {
+            while let Ok(event) = rx.try_recv() {
+                if matches!(event, TurnEvent::ToolResult { .. }) {
+                    flush_queued_busy_inputs(state);
+                }
+                if apply_turn_event(state, event) {
                     turn_done = true;
+                    break;
+                }
+            }
+            // 处理流式事件
+            while let Ok((delta, is_final)) = stream_rx.try_recv() {
+                let _ = apply_turn_event(state, TurnEvent::StreamDelta(delta, is_final));
+                if is_final {
+                    break;
+                }
+            }
+
+            render_screen(terminal, state)?;
+
+            if !turn_done && event::poll(Duration::from_millis(60))? {
+                let input_event = event::read()?;
+                match handle_busy_event(state, input_event) {
+                    BusyEventAction::None => {}
+                    BusyEventAction::Submit(raw) => queue_busy_submission(state, raw).await,
+                    BusyEventAction::Interrupt => {
+                        task.abort();
+                        append_runtime_message(ChatMessage::runtime_display(
+                            "command:error",
+                            "已中断当前轮次。",
+                        ));
+                        state.transcript_scroll_offset = 0;
+                        turn_done = true;
+                    }
                 }
             }
         }
+        flush_queued_busy_inputs(state);
+
+        // 回合结束后，若没有排队的新输入则退出循环
+        if state.queued_busy_inputs.is_empty() {
+            break;
+        }
+        // 有排队输入，自动发起新回合
+        let (new_tx, new_rx) = mpsc::unbounded_channel::<TurnEvent>();
+        let (new_stream_tx, new_stream_rx) = mpsc::unbounded_channel::<(String, bool)>();
+        permission_manager
+            .set_prompt_handler(build_prompt_handler(new_tx.clone()))
+            .await;
+        let new_model = get_model_adapter();
+        let new_task = tokio::spawn(async move {
+            let mut callbacks = ChannelCallbacks { tx: new_tx.clone() };
+            run_agent_turn_streaming(
+                new_model.as_ref(),
+                None,
+                Some(&mut callbacks),
+                Some(new_stream_tx),
+            )
+            .await;
+            let _ = new_tx.send(TurnEvent::Done);
+        });
+        task = new_task;
+        rx = new_rx;
+        stream_rx = new_stream_rx;
+        state.status = Some("Thinking...".to_string());
     }
-    flush_queued_busy_inputs(state);
 
     let done = runtime_messages();
     state.context_tokens_estimate = estimate_context_tokens(&done);

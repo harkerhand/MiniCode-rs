@@ -7,6 +7,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::state::ScreenState;
 use crate::theme::theme;
 
+use super::markdown::render_markdown;
 use super::ui_utils::sanitize_line;
 
 const TOOL_PREVIEW_LINES: usize = 6;
@@ -228,8 +229,24 @@ pub(super) fn transcript_lines(state: &ScreenState, width: usize) -> SessionRend
             }
         } else {
             lines.push(transcript_title_line(&entry.kind));
-            for line in entry.body.lines() {
-                lines.extend(wrapped_prefixed_lines(&sanitize_line(line), "  ", width));
+            match entry.kind.as_str() {
+                "assistant" | "progress" => {
+                    // Markdown 渲染
+                    for md_line in render_markdown(&entry.body) {
+                        let mut spans = vec![Span::raw("  ")];
+                        spans.extend(md_line.into_iter());
+                        lines.push(Line::from(spans));
+                    }
+                }
+                _ => {
+                    for line in entry.body.lines() {
+                        lines.extend(wrapped_prefixed_lines(
+                            &sanitize_line(line),
+                            "  ",
+                            width,
+                        ));
+                    }
+                }
             }
         }
     }

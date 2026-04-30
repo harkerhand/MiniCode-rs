@@ -14,6 +14,7 @@ use crate::theme::theme;
 
 mod approval;
 mod header;
+mod markdown;
 mod transcript;
 mod ui_utils;
 
@@ -68,7 +69,21 @@ pub(crate) fn render_screen(
 
         state.visible_tool_toggle_rows.clear();
         let session_inner_width = chunks[1].width.saturating_sub(2) as usize;
-        let session_render = session_lines(state, session_inner_width);
+        let mut session_render = session_lines(state, session_inner_width);
+
+        // 流式输出：追加正在生成中的文本
+        if !state.stream_text.is_empty() {
+            session_render.lines.push(Line::from(""));
+            session_render.lines.push(Line::from(vec![
+                Span::styled("▌ ", theme.header_label_session_style()),
+                Span::styled("Streaming...", theme.header_label_session_style()),
+            ]));
+            for line in state.stream_text.lines() {
+                session_render
+                    .lines
+                    .push(Line::from(Span::raw(line.to_string())));
+            }
+        }
         let feed_line_count = session_render.lines.len();
         let feed_viewport_height = chunks[1].height.saturating_sub(2) as usize;
         let max_scroll = feed_line_count.saturating_sub(feed_viewport_height);

@@ -4,6 +4,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -175,10 +176,23 @@ pub enum AgentStep {
     },
 }
 
+/// 流式输出的文本块回调：`(delta_text, is_final)`。
+pub type StreamCallback = dyn Fn(String, bool) -> BoxFuture<'static, ()> + Send + Sync;
+
 #[async_trait]
 pub trait ModelAdapter: Send + Sync {
     /// 基于当前对话消息生成下一步代理动作。
     async fn next(&self, messages: &[ChatMessage]) -> anyhow::Result<AgentStep>;
+
+    /// 流式输出：实时推送文本增量，最后返回完整 AgentStep。
+    /// 默认回退到非流式 `next()`。
+    async fn stream_next(
+        &self,
+        messages: &[ChatMessage],
+        _on_chunk: &StreamCallback,
+    ) -> anyhow::Result<AgentStep> {
+        self.next(messages).await
+    }
 
     /// 对历史消息进行摘要总结。
     /// 默认使用基于规则的 fallback 实现。

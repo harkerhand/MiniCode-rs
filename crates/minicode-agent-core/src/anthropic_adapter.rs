@@ -509,4 +509,193 @@ impl ModelAdapter for AnthropicModelAdapter {
             Some(trimmed)
         }
     }
+
+    /// SSE 流式输出：实时推送文本增量，最终返回完整 AgentStep。
+    async fn stream_next(
+        &self,
+        messages: &[ChatMessage],
+        on_chunk: &minicode_types::StreamCallback,
+    ) -> Result<AgentStep> {
+        let runtime = self.get_runtime().await?;
+        let (system, anth_messages) = Self::parse_anthropic_messages(messages);
+
+        let tool_defs: Vec<Value> = get_tool_registry()
+            .list()
+            .iter()
+            .map(|tool| {
+                json!({
+                    "name": tool.name(),
+                    "description": tool.description(),
+                    "input_schema": tool.input_schema(),
+                })
+            })
+            .collect();
+
+        let max_tokens = resolve_max_output_tokens(&runtime);
+        let url = format!(
+            "{}/v1/messages",
+            runtime.base_url.trim_end_matches('/')
+        );
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "anthropic-version",
+            reqwest::header::HeaderValue::from_static("2023-06-01"),
+        );
+        if let Some(token) = &runtime.auth_token {
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?,
+            );
+        } else if let Some(api_key) = &runtime.api_key {
+            headers.insert(
+                "x-api-key",
+                reqwest::header::HeaderValue::from_str(api_key)?,
+            );
+        }
+
+        let body = json!({
+            "model": runtime.model,
+            "system": system,
+            "messages": anth_messages,
+            "tools": tool_defs,
+            "max_tokens": max_tokens.unwrap_or(32_000),
+            "stream": true,
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await?;
+
+        let resp_status = resp.status().as_u16();
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("流式请求失败: {resp_status} {text}"));
+        }
+
+        // 解析 SSE 流
+        use futures::StreamExt;
+        let mut stream = resp.bytes_stream();
+        let mut buf = String::new();
+        let mut text_parts: Vec<String> = vec![];
+        let mut stop_reason: Option<String> = None;
+        let mut block_types: Vec<String> = vec![];
+        let mut ignored_block_types: Vec<String> = vec![];
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            let chunk_str = String::from_utf8_lossy(&chunk);
+            buf.push_str(&chunk_str);
+
+            while let Some(newline) = buf.find('\n') {
+                let line = buf[..newline].trim().to_string();
+                buf = buf[newline + 1..].to_string();
+
+                if line.is_empty() || line.starts_with(':') {
+                    continue;
+                }
+
+                let data = line
+                    .strip_prefix("data: ")
+                    .unwrap_or(&line);
+
+                if data == "[DONE]" {
+                    continue;
+                }
+
+                let Ok(event) = serde_json::from_str::<Value>(data) else {
+                    continue;
+                };
+
+                match event
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                {
+                    "content_block_start" => {
+                        if let Some(bt) = event
+                            .get("content_block")
+                            .and_then(|c| c.get("type"))
+                            .and_then(|t| t.as_str())
+                        {
+                            block_types.push(bt.to_string());
+                        }
+                    }
+                    "content_block_delta" => {
+                        if let Some(delta) = event.get("delta") {
+                            if delta
+                                .get("type")
+                                .and_then(|t| t.as_str())
+                                == Some("text_delta")
+                            {
+                                if let Some(txt) =
+                                    delta.get("text").and_then(|t| t.as_str())
+                                {
+                                    text_parts.push(txt.to_string());
+                                    on_chunk(txt.to_string(), false).await;
+                                }
+                            } else if delta
+                                .get("type")
+                                .and_then(|t| t.as_str())
+                                == Some("input_json_delta")
+                            {
+                                // 累积 tool_use 的部分 JSON
+                            }
+                        }
+                    }
+                    "content_block_stop" => {}
+                    "message_delta" => {
+                        if let Some(delta) = event.get("delta") {
+                            if let Some(sr) = delta
+                                .get("stop_reason")
+                                .and_then(|s| s.as_str())
+                            {
+                                stop_reason = Some(sr.to_string());
+                            }
+                        }
+                    }
+                    "message_stop" => {}
+                    _ => {
+                        ignored_block_types.push(
+                            event
+                                .get("type")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+
+        // 通知流式结束
+        on_chunk(String::new(), true).await;
+
+        let all_text = text_parts.join("");
+        let (content, kind) = Self::parse_assistant_text(&all_text);
+
+        let diagnostics = Some(StepDiagnostics {
+            stop_reason,
+            block_types: if block_types.is_empty() {
+                None
+            } else {
+                Some(block_types)
+            },
+            ignored_block_types: if ignored_block_types.is_empty() {
+                None
+            } else {
+                Some(ignored_block_types)
+            },
+        });
+
+        Ok(AgentStep::Assistant {
+            content,
+            kind,
+            diagnostics,
+        })
+    }
 }

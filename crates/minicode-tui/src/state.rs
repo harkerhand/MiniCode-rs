@@ -23,6 +23,8 @@ pub(crate) enum TurnEvent {
         output: String,
         is_error: bool,
     },
+    /// 流式文本增量（delta, is_final）
+    StreamDelta(String, bool),
     Assistant(String),
     Progress(String),
     Approval {
@@ -54,6 +56,8 @@ pub(crate) struct ScreenState {
     pub(crate) turn_count: usize,
     pub(crate) context_tokens_estimate: usize,
     pub(crate) queued_busy_inputs: Vec<String>,
+    /// 流式输出累积文本
+    pub(crate) stream_text: String,
 }
 
 pub(crate) struct ChannelCallbacks {
@@ -93,5 +97,12 @@ impl AgentTurnCallbacks for ChannelCallbacks {
         let _ = self
             .tx
             .send(TurnEvent::Progress("上下文已自动压缩以节省 token。".to_string()));
+    }
+
+    /// 流式输出文本增量。
+    fn on_stream_chunk(&mut self, delta: &str, is_final: bool) {
+        let _ = self
+            .tx
+            .send(TurnEvent::StreamDelta(delta.to_string(), is_final));
     }
 }
