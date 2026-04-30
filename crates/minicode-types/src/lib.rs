@@ -40,6 +40,8 @@ pub enum ChatMessage {
     Assistant { content: String },
     #[serde(rename = "assistant_progress")]
     AssistantProgress { content: String },
+    #[serde(rename = "context_summary")]
+    ContextSummary { content: String },
     #[serde(rename = "assistant_tool_call")]
     AssistantToolCall {
         #[serde(rename = "toolUseId")]
@@ -111,7 +113,7 @@ impl ChatMessage {
     pub fn flags(&self) -> MessageFlags {
         match self {
             ChatMessage::System { .. } => MessageFlags::new(MessageFlags::CONTEXT),
-            ChatMessage::Minicode { .. } => {
+            ChatMessage::Minicode { .. } | ChatMessage::ContextSummary { .. } => {
                 MessageFlags::new(MessageFlags::RECORD | MessageFlags::CONTEXT)
             }
             ChatMessage::User { .. }
@@ -177,6 +179,13 @@ pub enum AgentStep {
 pub trait ModelAdapter: Send + Sync {
     /// 基于当前对话消息生成下一步代理动作。
     async fn next(&self, messages: &[ChatMessage]) -> anyhow::Result<AgentStep>;
+
+    /// 对历史消息进行摘要总结。
+    /// 默认使用基于规则的 fallback 实现。
+    async fn summarize_conversation(&self, messages: &[ChatMessage]) -> Option<String> {
+        let _ = messages;
+        None
+    }
 }
 
 /// Represents the current permissions summary for the session

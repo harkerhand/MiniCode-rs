@@ -87,4 +87,11 @@ impl AgentTurnCallbacks for ChannelCallbacks {
     fn on_progress_message(&mut self, content: &str) {
         let _ = self.tx.send(TurnEvent::Progress(content.to_string()));
     }
+
+    /// 上下文被压缩时通知 UI。
+    fn on_compact(&mut self, _summary: &str) {
+        let _ = self
+            .tx
+            .send(TurnEvent::Progress("上下文已自动压缩以节省 token。".to_string()));
+    }
 }

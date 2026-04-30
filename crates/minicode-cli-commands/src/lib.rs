@@ -193,6 +193,63 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
             })
         },
     },
+    SlashCommand {
+        prefix: "/compact",
+        usage: "/compact",
+        description: "手动压缩当前会话上下文。",
+        handler: |_| {
+            Box::pin(async move {
+                let messages_without_system =
+                    minicode_history::runtime_messages_for_context();
+                let mut messages = Vec::with_capacity(messages_without_system.len() + 1);
+                messages.push(minicode_types::ChatMessage::System {
+                    content: minicode_prompt::build_system_prompt(),
+                });
+                messages.extend(messages_without_system);
+
+                let count_before = messages.len();
+                let model = minicode_types::get_model_adapter();
+                let compacted = minicode_agent_core::maybe_auto_compact_conversation(
+                    model.as_ref(),
+                    messages,
+                    Some(0), // 强制压缩，不检查阈值
+                    Some(2),  // 保留最近 2 条
+                    None::<&(dyn Fn(&str) + Send + Sync)>,
+                )
+                .await;
+
+                if compacted.len() < count_before {
+                    let arc = minicode_history::get_messages();
+                    let mut guard = match arc.lock() {
+                        Ok(g) => g,
+                        Err(e) => e.into_inner(),
+                    };
+                    let system_msgs: Vec<minicode_types::ChatMessage> = guard
+                        .iter()
+                        .filter(|m| matches!(m, minicode_types::ChatMessage::System { .. }))
+                        .cloned()
+                        .collect();
+                    guard.clear();
+                    guard.extend(system_msgs);
+                    for msg in &compacted {
+                        if !matches!(msg, minicode_types::ChatMessage::System { .. }) {
+                            guard.push(msg.clone());
+                        }
+                    }
+                    // 持久化压缩后的消息
+                    drop(guard);
+                    minicode_history::persist_current_messages();
+                    Ok(format!(
+                        "上下文已压缩：{} 条消息 -> {} 条",
+                        count_before,
+                        compacted.len()
+                    ))
+                } else {
+                    Ok("当前上下文较短，无需压缩。".to_string())
+                }
+            })
+        },
+    },
 ];
 
 /// 格式化所有内置斜杠命令的帮助文本。

@@ -2,11 +2,31 @@ use std::path::{Path, PathBuf};
 
 use crate::runtime_store;
 
-/// 返回 mini-code 配置目录 `~/.mini-code`。
+/// 返回 MINI_CODE_BIN_DIR 环境变量中指定的自定义二进制目录。
+pub fn mini_code_bin_dir() -> Option<PathBuf> {
+    std::env::var("MINI_CODE_BIN_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+}
+
+/// 返回 mini-code 配置目录。
+/// 优先使用 `MINI_CODE_HOME` 环境变量，否则回退到 `~/.mini-code`。
 pub fn mini_code_dir() -> PathBuf {
+    if let Some(dir) = std::env::var("MINI_CODE_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        return PathBuf::from(dir);
+    }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".mini-code")
+}
+
+/// 检查 CLI 启动器是否来自自定义 bin 目录。
+pub fn is_custom_bin_dir() -> bool {
+    mini_code_bin_dir().is_some()
 }
 
 /// 返回全局设置文件路径。
@@ -24,6 +44,11 @@ pub fn mini_code_permissions_path() -> PathBuf {
 /// 返回全局 MCP 配置文件路径。
 pub fn mini_code_mcp_path() -> PathBuf {
     mini_code_dir().join("mcp.json")
+}
+
+/// 返回 MCP token 存储文件路径。
+pub fn mini_code_mcp_tokens_path() -> PathBuf {
+    mini_code_dir().join("mcp-tokens.json")
 }
 
 /// 返回项目级 MCP 配置路径。

@@ -1,4 +1,8 @@
-use minicode_history::{append_runtime_message, runtime_messages_for_context};
+use crate::compact::maybe_auto_compact_conversation;
+use minicode_history::{
+    append_runtime_message, estimate_context_tokens, get_messages, persist_current_messages,
+    runtime_messages_for_context,
+};
 use minicode_prompt::build_system_prompt;
 use minicode_tool::get_tool_registry;
 use minicode_types::{AgentStep, ChatMessage, ModelAdapter};
@@ -13,6 +17,8 @@ pub trait AgentTurnCallbacks: Send {
     fn on_assistant_message(&mut self, _content: &str) {}
     /// 助手给出进度消息时触发。
     fn on_progress_message(&mut self, _content: &str) {}
+    /// 上下文自动压缩时触发。
+    fn on_compact(&mut self, _summary: &str) {}
 }
 
 /// 判断助手回复是否为空白内容。
@@ -64,6 +70,40 @@ pub async fn run_agent_turn(
     let limit = max_steps.unwrap_or(64);
 
     for _ in 0..limit {
+        // 每轮检查是否需要自动压缩上下文
+        let messages_before = get_messages_with_system();
+        let has_context_summary = messages_before
+            .iter()
+            .any(|m| matches!(m, ChatMessage::ContextSummary { .. }));
+        let original_len = messages_before.len();
+        // 只有在尚未压缩过的情况下才检查（避免重复压缩）
+        if !has_context_summary {
+            let estimated = estimate_context_tokens(&messages_before);
+            if estimated > 128_000 {
+                let compacted = maybe_auto_compact_conversation(
+                    model,
+                    messages_before,
+                    None,
+                    None,
+                    None::<&(dyn Fn(&str) + Send + Sync)>,
+                )
+                .await;
+                // 如果压缩后的消息列表不同于原始（即实际发生了压缩），替换存储
+                if compacted.len() < original_len {
+                    replace_context_messages(&compacted);
+                    persist_current_messages();
+                    if let Some(cb) = callbacks.as_deref_mut() {
+                        if let Some(ChatMessage::ContextSummary { content }) = compacted
+                            .iter()
+                            .find(|m| matches!(m, ChatMessage::ContextSummary { .. }))
+                        {
+                            cb.on_compact(content);
+                        }
+                    }
+                }
+            }
+        }
+
         let next = match model.next(&get_messages_with_system()).await {
             Ok(step) => step,
             Err(err) => {
@@ -266,4 +306,27 @@ fn get_messages_with_system() -> Vec<ChatMessage> {
     });
     messages.extend(messages_without_system);
     messages
+}
+
+/// 将压缩后的消息列表替换到全局消息存储中（保留 system 消息的对应关系）。
+fn replace_context_messages(compacted: &[ChatMessage]) {
+    let arc = get_messages();
+    let mut guard = match arc.lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    // 保留 system 消息，替换其余内容
+    let system_msgs: Vec<ChatMessage> = guard
+        .iter()
+        .filter(|m| matches!(m, ChatMessage::System { .. }))
+        .cloned()
+        .collect();
+    guard.clear();
+    guard.extend(system_msgs);
+    // 添加压缩后的非 system 消息（compact 返回的消息已包含 system）
+    for msg in compacted {
+        if !matches!(msg, ChatMessage::System { .. }) {
+            guard.push(msg.clone());
+        }
+    }
 }

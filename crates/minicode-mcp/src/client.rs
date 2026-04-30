@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use minicode_config::McpServerConfig;
+use minicode_config::{McpServerConfig, get_mcp_token};
 use minicode_tool::ToolResult;
 use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
 use rmcp::service::RunningService;
@@ -52,7 +52,18 @@ impl McpClient {
                         server_name
                     )
                 })?;
-                let headers = extract_string_map(config.headers.as_ref())?;
+                let mut headers = extract_string_map(config.headers.as_ref())?;
+                // 注入已存储的 token（若配置 header 中未显式设置 Authorization）
+                if !headers.contains_key("Authorization")
+                    && !headers.contains_key("authorization")
+                {
+                    if let Some(token) = get_mcp_token(server_name) {
+                        headers
+                            .insert("Authorization".to_string(), format!("Bearer {token}"));
+                    }
+                }
+                // 展开 header 值中的环境变量引用（如 $MCP_TOKEN）
+                headers = resolve_header_env_vars(headers);
                 mcp_log(format!(
                     "server={} rmcp connect remote url={} headers={}",
                     server_name,
@@ -227,4 +238,48 @@ fn extract_string_map(
         result.insert(key.clone(), parsed);
     }
     Ok(result)
+}
+
+/// 将 header 值中的 `$VAR` 或 `${VAR}` 展开为环境变量的值。
+fn resolve_header_env_vars(headers: HashMap<String, String>) -> HashMap<String, String> {
+    headers
+        .into_iter()
+        .map(|(k, v)| (k, resolve_env_vars_in_string(&v)))
+        .collect()
+}
+
+/// 替换字符串中 `$VAR` / `${VAR}` 为环境变量的值。
+fn resolve_env_vars_in_string(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(dollar) = rest.find('$') {
+        result.push_str(&rest[..dollar]);
+        let after_dollar = &rest[dollar + 1..];
+        if after_dollar.starts_with('{') {
+            if let Some(close) = after_dollar.find('}') {
+                let var_name = &after_dollar[1..close];
+                let value = std::env::var(var_name).unwrap_or_else(|_| format!("${{{var_name}}}"));
+                result.push_str(&value);
+                rest = &after_dollar[close + 1..];
+            } else {
+                result.push('$');
+                rest = after_dollar;
+            }
+        } else {
+            let end = after_dollar
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(after_dollar.len());
+            if end == 0 {
+                result.push('$');
+                rest = after_dollar;
+            } else {
+                let var_name = &after_dollar[..end];
+                let value = std::env::var(var_name).unwrap_or_else(|_| format!("${var_name}"));
+                result.push_str(&value);
+                rest = &after_dollar[end..];
+            }
+        }
+    }
+    result.push_str(rest);
+    result
 }

@@ -3,7 +3,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor::Show;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    self, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton,
+    MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -38,7 +41,13 @@ impl TerminalGuard {
     fn enter() -> Result<Self> {
         let mut stdout = io::stdout();
         enable_raw_mode()?;
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Show)?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            EnableBracketedPaste,
+            Show
+        )?;
         Ok(Self)
     }
 }
@@ -79,6 +88,8 @@ pub async fn run_tui_app() -> Result<()> {
 
     let mut should_exit = false;
     while !should_exit {
+        // 更新上下文 token 估计
+        state.context_tokens_estimate = estimate_context_tokens(&runtime_messages());
         render_screen(&mut terminal, &mut state)?;
 
         if event::poll(Duration::from_millis(150))? {
@@ -103,6 +114,17 @@ pub async fn run_tui_app() -> Result<()> {
                     _ => {}
                 },
                 Event::Key(key) => {
+                    // 防御性检查：若审批通道已关闭则自动清除等待
+                    if let Some(ref pending) = state.pending_approval {
+                        if pending.responder.is_none() {
+                            state.pending_approval = None;
+                            state.status = state
+                                .active_tool
+                                .as_ref()
+                                .map(|tool| format!("Running {tool}..."))
+                                .or_else(|| Some("Thinking...".to_string()));
+                        }
+                    }
                     if state.pending_approval.is_some() {
                         let _ = handle_approval_key(&mut state, key);
                         continue;
@@ -317,6 +339,19 @@ pub async fn run_tui_app() -> Result<()> {
                         }
                         _ => {}
                     }
+                }
+                Event::Paste(text) => {
+                    if state.is_busy || state.pending_approval.is_some() {
+                        continue;
+                    }
+                    // 多行粘贴：将换行符保持为文本，而非提交键
+                    for ch in text.chars() {
+                        let at = state.cursor_offset.min(char_len(&state.input));
+                        insert_char_at(&mut state.input, at, ch);
+                        state.cursor_offset = at + 1;
+                    }
+                    state.selected_slash_index = 0;
+                    state.history_index = state.history.len();
                 }
                 Event::Resize(_, _) => {}
                 _ => {}

@@ -72,11 +72,26 @@ pub fn runtime_messages_count() -> usize {
     get_messages().lock().map(|g| g.len()).unwrap_or_default()
 }
 
+/// 将当前内存中的消息持久化到磁盘。
+pub fn persist_current_messages() {
+    let messages = runtime_messages();
+    let persisted: Vec<ChatMessage> = messages
+        .iter()
+        .filter(|msg| msg.should_record())
+        .cloned()
+        .collect();
+    persist_runtime_messages(&persisted);
+}
+
 pub fn clear_runtime_messages() {
     let arc = get_messages();
     let mut guard = arc.lock().unwrap_or_else(|e| e.into_inner());
     guard.clear();
-    persist_runtime_messages(&[]);
+    // 直接删除会话文件，避免 save_session_messages 跳过空消息导致残留
+    let cwd = runtime_store().cwd.clone();
+    let session_id = runtime_store().session_id.clone();
+    let path = project_session_conversation_path(cwd, &session_id);
+    let _ = fs::remove_file(&path);
 }
 
 pub fn append_runtime_message(message: ChatMessage) {

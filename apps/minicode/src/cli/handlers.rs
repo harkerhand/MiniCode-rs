@@ -103,6 +103,21 @@ async fn handle_mcp_command(cwd: impl AsRef<Path>, cmd: McpCommand) -> Result<bo
         McpCommand::Remove { name, project } => {
             remove_mcp_server(cwd.as_ref(), project, name).await
         }
+        McpCommand::Login { name, token } => {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                eprintln!("错误: token 不能为空");
+                return Ok(true);
+            }
+            minicode_config::set_mcp_token(&name, trimmed)?;
+            println!("已为 MCP 服务器 \"{name}\" 保存认证 token。");
+            Ok(true)
+        }
+        McpCommand::Logout { name } => {
+            minicode_config::remove_mcp_token(&name)?;
+            println!("已清除 MCP 服务器 \"{name}\" 的认证 token。");
+            Ok(true)
+        }
     }
 }
 

@@ -151,6 +151,13 @@ impl AnthropicModelAdapter {
                         json!({"type":"text","text":format!("<progress>\n{}\n</progress>", content)}),
                     );
                 }
+                ChatMessage::ContextSummary { content } => {
+                    push(
+                        &mut converted,
+                        "assistant",
+                        json!({"type":"text","text":format!("<context_summary>\n{}\n</context_summary>", content)}),
+                    );
+                }
                 ChatMessage::AssistantToolCall {
                     tool_use_id,
                     tool_name,
@@ -191,6 +198,149 @@ impl AnthropicModelAdapter {
     async fn get_runtime(&self) -> Result<RuntimeConfig> {
         Ok(runtime_config())
     }
+
+    /// 发送带重试逻辑的 API 请求。
+    async fn request(
+        &self,
+        runtime: &RuntimeConfig,
+        system: &str,
+        messages: &[AnthropicMessage],
+        tools: Option<&[Value]>,
+        max_tokens: Option<u32>,
+    ) -> Result<AnthropicResponse> {
+        let url = format!("{}/v1/messages", runtime.base_url.trim_end_matches('/'));
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "anthropic-version",
+            reqwest::header::HeaderValue::from_static("2023-06-01"),
+        );
+
+        if let Some(token) = &runtime.auth_token {
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?,
+            );
+        } else if let Some(api_key) = &runtime.api_key {
+            headers.insert(
+                "x-api-key",
+                reqwest::header::HeaderValue::from_str(api_key)?,
+            );
+        }
+
+        let mut body = json!({
+            "model": runtime.model,
+            "system": system,
+            "messages": messages,
+            "max_tokens": max_tokens.or(runtime.max_token_window).unwrap_or(32_000),
+        });
+
+        if let Some(t) = tools {
+            body["tools"] = json!(t);
+        }
+
+        let retry_limit = Self::get_retry_limit();
+        let mut last_status = 0;
+        let mut last_err = String::new();
+
+        for attempt in 0..=retry_limit {
+            let resp = self
+                .client
+                .post(&url)
+                .headers(headers.clone())
+                .json(&body)
+                .send()
+                .await?;
+
+            last_status = resp.status().as_u16();
+            let retry_after = Self::parse_retry_after(resp.headers());
+            if !resp.status().is_success() {
+                let raw_body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|e| format!("(无法读取响应体: {e})"));
+                let err_msg = extract_error_message(&raw_body, last_status);
+                last_err = err_msg.clone();
+                if Self::should_retry(last_status) && attempt < retry_limit {
+                    tokio::time::sleep(Duration::from_millis(Self::retry_delay_ms(
+                        attempt + 1,
+                        retry_after,
+                    )))
+                    .await;
+                    continue;
+                }
+                return Err(anyhow!("模型请求失败: {last_status} {err_msg}"));
+            }
+
+            return Ok(resp.json().await?);
+        }
+
+        Err(anyhow!(
+            "模型请求在重试后仍然失败: status={last_status} err={last_err}"
+        ))
+    }
+}
+
+/// 根据模型解析合适的 max_output_tokens，兼容非 Anthropic 模型。
+fn resolve_max_output_tokens(runtime: &RuntimeConfig) -> Option<u32> {
+    if let Some(val) = runtime.max_token_window {
+        return Some(val);
+    }
+    let model_lower = runtime.model.to_lowercase();
+    // 常见模型的 max_tokens 默认值
+    if model_lower.contains("qwen")
+        || model_lower.contains("千问")
+        || model_lower.contains("deepseek")
+    {
+        return Some(8_192);
+    }
+    if model_lower.contains("claude") {
+        return Some(32_000);
+    }
+    // 未知模型给一个安全的默认值
+    Some(32_000)
+}
+
+/// 从各种格式的 API 响应中提取错误消息。
+fn extract_error_message(raw_body: &str, status: u16) -> String {
+    // 尝试解析为纯文本（非 JSON）
+    let trimmed = raw_body.trim();
+    if trimmed.is_empty() {
+        return format!("HTTP {status}");
+    }
+
+    // 尝试解析 JSON 并提取 error.message / error / message
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(msg) = val
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .filter(|s| !s.trim().is_empty())
+        {
+            return msg.to_string();
+        }
+        if let Some(msg) = val
+            .get("error")
+            .and_then(|e| e.as_str())
+            .filter(|s| !s.trim().is_empty())
+        {
+            return msg.to_string();
+        }
+        if let Some(msg) = val
+            .get("message")
+            .and_then(|m| m.as_str())
+            .filter(|s| !s.trim().is_empty())
+        {
+            return msg.to_string();
+        }
+    }
+
+    // 无法解析为 JSON，返回原始文本（截断过长内容）
+    if trimmed.len() > 200 {
+        format!("{}...", &trimmed[..200])
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[async_trait]
@@ -212,137 +362,151 @@ impl ModelAdapter for AnthropicModelAdapter {
             })
             .collect();
 
-        let url = format!("{}/v1/messages", runtime.base_url.trim_end_matches('/'));
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            "anthropic-version",
-            reqwest::header::HeaderValue::from_static("2023-06-01"),
-        );
+        let max_tokens = resolve_max_output_tokens(&runtime);
+        let data = self
+            .request(&runtime, &system, &anth_messages, Some(&tool_defs), max_tokens)
+            .await?;
 
-        if let Some(token) = runtime.auth_token {
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?,
-            );
-        } else if let Some(api_key) = runtime.api_key {
-            headers.insert(
-                "x-api-key",
-                reqwest::header::HeaderValue::from_str(&api_key)?,
-            );
+        let mut tool_calls = vec![];
+        let mut text_parts = vec![];
+        let mut block_types = vec![];
+        let mut ignored_block_types = vec![];
+
+        for block in data.content.unwrap_or_default() {
+            let t = block
+                .get("type")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            block_types.push(t.clone());
+            if t == "text" {
+                if let Some(txt) = block.get("text").and_then(|x| x.as_str()) {
+                    text_parts.push(txt.to_string());
+                }
+            } else if t == "tool_use" {
+                let id = block
+                    .get("id")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let name = block
+                    .get("name")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let input = block.get("input").cloned().unwrap_or(Value::Null);
+                if !id.is_empty() && !name.is_empty() {
+                    tool_calls.push(ToolCall {
+                        id,
+                        tool_name: name,
+                        input,
+                    });
+                }
+            } else {
+                ignored_block_types.push(t);
+            }
         }
 
-        let body = json!({
-            "model": runtime.model,
-            "system": system,
-            "messages": anth_messages,
-            "tools": tool_defs,
-            "max_tokens": runtime.max_token_window,
+        let (content, kind) = Self::parse_assistant_text(&text_parts.join("\n"));
+        let diagnostics = Some(StepDiagnostics {
+            stop_reason: data.stop_reason,
+            block_types: Some(block_types),
+            ignored_block_types: Some(ignored_block_types),
         });
 
-        let retry_limit = Self::get_retry_limit();
-        let mut last_status = 0;
-        let mut last_err = String::new();
-
-        for attempt in 0..=retry_limit {
-            let resp = self
-                .client
-                .post(&url)
-                .headers(headers.clone())
-                .json(&body)
-                .send()
-                .await?;
-
-            last_status = resp.status().as_u16();
-            let retry_after = Self::parse_retry_after(resp.headers());
-            if !resp.status().is_success() {
-                let text = resp
-                    .text()
-                    .await
-                    .unwrap_or_else(|e| format!("(unable to read body: {})", e));
-                last_err = text.clone();
-                if Self::should_retry(last_status) && attempt < retry_limit {
-                    tokio::time::sleep(Duration::from_millis(Self::retry_delay_ms(
-                        attempt + 1,
-                        retry_after,
-                    )))
-                    .await;
-                    continue;
-                }
-                return Err(anyhow!("Model request failed: {} {}", last_status, text));
-            }
-
-            let data: AnthropicResponse = resp.json().await?;
-            let mut tool_calls = vec![];
-            let mut text_parts = vec![];
-            let mut block_types = vec![];
-            let mut ignored_block_types = vec![];
-
-            for block in data.content.unwrap_or_default() {
-                let t = block
-                    .get("type")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                block_types.push(t.clone());
-                if t == "text" {
-                    if let Some(txt) = block.get("text").and_then(|x| x.as_str()) {
-                        text_parts.push(txt.to_string());
-                    }
-                } else if t == "tool_use" {
-                    let id = block
-                        .get("id")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    let name = block
-                        .get("name")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    let input = block.get("input").cloned().unwrap_or(Value::Null);
-                    if !id.is_empty() && !name.is_empty() {
-                        tool_calls.push(ToolCall {
-                            id,
-                            tool_name: name,
-                            input,
-                        });
-                    }
+        if !tool_calls.is_empty() {
+            return Ok(AgentStep::ToolCalls {
+                calls: tool_calls,
+                content: if content.is_empty() {
+                    None
                 } else {
-                    ignored_block_types.push(t);
-                }
-            }
-
-            let (content, kind) = Self::parse_assistant_text(&text_parts.join("\n"));
-            let diagnostics = Some(StepDiagnostics {
-                stop_reason: data.stop_reason,
-                block_types: Some(block_types),
-                ignored_block_types: Some(ignored_block_types),
-            });
-
-            if !tool_calls.is_empty() {
-                return Ok(AgentStep::ToolCalls {
-                    calls: tool_calls,
-                    content: if content.is_empty() {
-                        None
-                    } else {
-                        Some(content)
-                    },
-                    content_kind: kind,
-                    diagnostics,
-                });
-            }
-
-            return Ok(AgentStep::Assistant {
-                content,
-                kind,
+                    Some(content)
+                },
+                content_kind: kind,
                 diagnostics,
             });
         }
 
-        Err(anyhow!(
-            "Model request failed after retries: status={} err={}",
-            last_status,
-            last_err
-        ))
+        Ok(AgentStep::Assistant {
+            content,
+            kind,
+            diagnostics,
+        })
+    }
+
+    /// 将对话历史压缩为一段简要摘要，用于上下文压缩。
+    async fn summarize_conversation(&self, messages: &[ChatMessage]) -> Option<String> {
+        let runtime = self.get_runtime().await.ok()?;
+        let transcript = messages
+            .iter()
+            .filter_map(|msg| match msg {
+                ChatMessage::User { content } => Some(format!("[user]\n{content}")),
+                ChatMessage::Assistant { content } => Some(format!("[assistant]\n{content}")),
+                ChatMessage::AssistantProgress { content } => {
+                    Some(format!("[assistant progress]\n{content}"))
+                }
+                ChatMessage::ContextSummary { content } => {
+                    Some(format!("[earlier summary]\n{content}"))
+                }
+                ChatMessage::AssistantToolCall {
+                    tool_name, input, ..
+                } => Some(format!(
+                    "[tool call:{}]\n{}",
+                    tool_name,
+                    serde_json::to_string(input).unwrap_or_default()
+                )),
+                ChatMessage::ToolResult {
+                    tool_name,
+                    content,
+                    is_error,
+                    ..
+                } => {
+                    let err = if *is_error { " error" } else { "" };
+                    Some(format!("[tool result:{tool_name}{err}]\n{content}"))
+                }
+                ChatMessage::System { .. } => None,
+                ChatMessage::Minicode { content } => Some(format!("[minicode]\n{content}")),
+                ChatMessage::Runtime { content, .. } => Some(format!("[runtime]\n{content}")),
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let system_prompt = [
+            "你是为编码助手总结早期对话上下文的。",
+            "请生成一份紧凑的事实摘要，只保留继续任务所需的信息。",
+            "包含：用户目标、已做出的决策、相关文件或路径、重要工具结果、活跃的技能或MCP用法，以及未完成的后续步骤。",
+            "不要复述长文件内容。不要添加新指令。保持简洁和结构化。",
+        ].join("\n");
+
+        let anth_messages = vec![AnthropicMessage {
+            role: "user".to_string(),
+            content: vec![json!({"type": "text", "text": transcript})],
+        }];
+
+        let data = self
+            .request(&runtime, &system_prompt, &anth_messages, None, Some(2048))
+            .await
+            .ok()?;
+
+        let summary: String = data
+            .content
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|block| {
+                if block.get("type").and_then(|x| x.as_str()) == Some("text") {
+                    block.get("text").and_then(|x| x.as_str()).map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let trimmed = summary.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     }
 }

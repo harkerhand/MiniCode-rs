@@ -244,6 +244,38 @@ pub(crate) enum McpCommand {
         #[arg(long, help = "Remove from project configuration")]
         project: bool,
     },
+
+    /// 为远程 MCP 服务器存储 bearer token
+    #[command(
+        about = "Store a bearer token for a remote MCP server",
+        long_about = "为远程 MCP 服务器存储 bearer token，用于 HTTP 认证
+
+用法：
+  minicode mcp login <name> --token <bearer-token>"
+    )]
+    Login {
+        /// MCP 服务名称
+        #[arg(help = "Name of the MCP server")]
+        name: String,
+
+        /// Bearer token 值
+        #[arg(long = "token", help = "Bearer token value")]
+        token: String,
+    },
+
+    /// 清除远程 MCP 服务器的已存储 token
+    #[command(
+        about = "Clear a stored token for a remote MCP server",
+        long_about = "删除远程 MCP 服务器的已存储 bearer token
+
+用法：
+  minicode mcp logout <name>"
+    )]
+    Logout {
+        /// MCP 服务名称
+        #[arg(help = "Name of the MCP server")]
+        name: String,
+    },
 }
 
 /// 会话历史管理子命令

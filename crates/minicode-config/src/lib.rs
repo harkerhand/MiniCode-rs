@@ -185,6 +185,41 @@ pub fn load_scoped_mcp_servers(
     read_mcp_servers(&path)
 }
 
+/// 读取 MCP token 文件，返回 name -> token 的映射。
+pub fn read_mcp_tokens() -> Result<HashMap<String, String>> {
+    let path = mini_code_mcp_tokens_path();
+    read_json_file::<HashMap<String, String>>(path)
+}
+
+/// 保存 MCP token 到文件。
+pub fn save_mcp_tokens(tokens: &HashMap<String, String>) -> Result<()> {
+    let path = mini_code_mcp_tokens_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, format!("{}\n", serde_json::to_string_pretty(tokens)?))?;
+    Ok(())
+}
+
+/// 获取指定 MCP 服务器的已存储 token（若有）。
+pub fn get_mcp_token(name: &str) -> Option<String> {
+    read_mcp_tokens().ok().and_then(|t| t.get(name).cloned())
+}
+
+/// 存储指定 MCP 服务器的 token。
+pub fn set_mcp_token(name: &str, token: &str) -> Result<()> {
+    let mut tokens = read_mcp_tokens().unwrap_or_default();
+    tokens.insert(name.to_string(), token.to_string());
+    save_mcp_tokens(&tokens)
+}
+
+/// 删除指定 MCP 服务器的已存储 token。
+pub fn remove_mcp_token(name: &str) -> Result<()> {
+    let mut tokens = read_mcp_tokens().unwrap_or_default();
+    tokens.remove(name);
+    save_mcp_tokens(&tokens)
+}
+
 /// 保存指定作用域（user/project）的 MCP 服务器配置。
 pub fn save_scoped_mcp_servers(
     project: bool,

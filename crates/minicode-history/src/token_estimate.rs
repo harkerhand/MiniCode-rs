@@ -38,7 +38,9 @@ pub fn estimate_context_tokens(messages: &[ChatMessage]) -> usize {
                         + estimate_text_tokens(tool_name)
                         + estimate_text_tokens(content)
                 }
-                ChatMessage::Runtime { content, .. } => estimate_text_tokens(content),
+                ChatMessage::Runtime { content, .. } | ChatMessage::ContextSummary { content } => {
+                    estimate_text_tokens(content)
+                }
             };
             MESSAGE_OVERHEAD_TOKENS + content_tokens
         })

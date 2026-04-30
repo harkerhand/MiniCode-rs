@@ -10,6 +10,7 @@ authors.workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
+minicode-config = { workspace = true }
 minicode-core = { workspace = true }
 crossterm = { workspace = true }
 

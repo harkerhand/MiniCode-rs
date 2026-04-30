@@ -4,85 +4,85 @@
   <img src="./docs/logo.png" alt="MiniCode Logo" width="120" />
 </p>
 
-This is the Rust implementation of MiniCode, also called RushCode. It keeps the overall workflow aligned with the original project while rewriting core runtime logic and terminal UI in Rust.
+这是 MiniCode 的 Rust 版本实现，也可以称之为 RushCode。它在功能上基本保持一致，但使用 Rust 语言重写了核心逻辑和终端 UI。
 
 ![Rust](https://img.shields.io/badge/Rust-Edition-CE412B?style=flat-square&logo=rust)
 ![Cargo](https://img.shields.io/badge/Cargo-Workspace-6E4C1E?style=flat-square&logo=rust)
 ![Ratatui](https://img.shields.io/badge/TUI-Ratatui-1D7A5E?style=flat-square)
 
-Original TypeScript repository: [LiuMengxuan04/MiniCode](https://github.com/LiuMengxuan04/MiniCode)
+原始 TypeScript 仓库链接：[LiuMengxuan04/MiniCode](https://github.com/LiuMengxuan04/MiniCode)
 
-This document is copied from the original repository and is not fully adapted to every Rust-specific detail yet. The overall architecture and usage remain similar, so use it as a practical reference.
+以下文档从原版仓库拷贝而来，不完全适配 Rust 版本的细节，但整体架构和使用方式是类似的。请根据实际情况参考。
 
-[简体中文](./README.zh-CN.md) | [Architecture](./docs/ARCHITECTURE.md) | [Contributing](./CONTRIBUTING.md) | [Roadmap](./ROADMAP.md) | [Learn Claude Code Design Through MiniCode](./CLAUDE_CODE_PATTERNS.md) | [License](./LICENSE)
+[English](./README.en.md) | [架构说明](./docs/ARCHITECTURE.zh-CN.md) | [贡献规范](./CONTRIBUTING_ZH.md) | [路线图](./ROADMAP_ZH.md) | [通过 MiniCode 学习 Claude Code 设计](./CLAUDE_CODE_PATTERNS_ZH.md) | [License](./LICENSE)
 
-A lightweight terminal coding assistant for local development workflows.
+一个面向本地开发工作流的轻量级终端编码助手。
 
-MiniCode provides Claude Code-like workflow and architectural ideas in a much smaller implementation, making it especially useful for learning, experimentation, and custom tooling.
+MiniCode 用更小的实现体量，提供了类 Claude Code 的工作流体验和架构思路，因此非常适合学习、实验，以及继续做自己的定制化开发。
 
-## Overview
+## 项目简介
 
-MiniCode is built around a practical terminal-first agent loop:
+MiniCode 围绕一个实用的 terminal-first agent loop 构建：
 
-- accept a user request
-- inspect the workspace
-- call tools when needed
-- review file changes before writing
-- return a final response in the same terminal session
+- 接收用户请求
+- 检查当前工作区
+- 在需要时调用工具
+- 修改文件前先 review
+- 在同一个终端会话里返回最终结果
 
-The project is intentionally compact, so the control flow, tool model, and TUI behavior remain easy to understand and extend.
+整个项目有意保持紧凑，这样主控制流、工具模型和 TUI 行为都更容易理解和扩展。
 
-## Multi-language Versions
+## 多语言版本
 
 - TypeScript: [MiniCode](https://github.com/LiuMengxuan04/MiniCode)
 - Rust (this repo): [MiniCode-rs](https://github.com/harkerhand/MiniCode-rs)
-- Python: coming soon
+- Python: [MiniCode-Python](https://github.com/QUSETIONS/MiniCode-Python)
 
-## Table of Contents
+## 目录
 
-- [Product Showcase Page](#product-showcase-page)
-- [Why MiniCode](#why-minicode)
-- [Features](#features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Commands](#commands)
-- [Configuration](#configuration)
-- [Skills and MCP Usage](#skills-and-mcp-usage)
-- [Star History](#star-history)
-- [Project Structure](#project-structure)
-- [Architecture Docs](#architecture-docs)
-- [Contributing](#contributing)
-- [Roadmap](#roadmap)
-- [Learn Claude Code Design Through MiniCode](#learn-claude-code-design-through-minicode)
-- [Development](#development)
+- [产品介绍展示页](#产品介绍展示页)
+- [为什么选择 MiniCode](#为什么选择-minicode)
+- [功能特性](#功能特性)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [命令](#命令)
+- [配置](#配置)
+- [Skills 与 MCP 用法](#skills-与-mcp-用法)
+- [Star 趋势](#star-趋势)
+- [项目结构](#项目结构)
+- [架构文档](#架构文档)
+- [贡献规范](#贡献规范)
+- [路线图](#路线图)
+- [通过 MiniCode 学习 Claude Code 设计](#通过-minicode-学习-claude-code-设计)
+- [开发说明](#开发说明)
 
-## Product Showcase Page
+## 产品介绍展示页
 
-- Open [docs/index.html](./docs/index.html) in a browser for a visual product overview.
-- GitHub Pages (recommended): `https://liumengxuan04.github.io/MiniCode/`
+- 在浏览器中打开 [docs/index.html](./docs/index.html)，即可查看可视化产品介绍页面。
+- GitHub Pages 推荐访问地址：`https://liumengxuan04.github.io/MiniCode/`
 
-## Why MiniCode
+## 为什么选择 MiniCode
 
-MiniCode is a good fit if you want:
+如果你希望得到下面这些东西，MiniCode 会很合适：
 
-- a lightweight coding assistant instead of a large platform
-- a terminal UI with tool calling, transcript, and command workflow
-- a small codebase that is suitable for study and modification
-- a reference implementation for Claude Code-like agent architecture
+- 一个轻量级 coding assistant，而不是庞大的平台
+- 一个带 tool calling、transcript 和命令工作流的终端 UI
+- 一个很适合阅读和二次开发的小代码库
+- 一个可用于学习类 Claude Code agent 架构的参考实现
 
-## Features
+## 功能特性
 
-### Core workflow
+### 核心工作流
 
-- multi-step tool execution in a single turn
-- model -> tool -> model loop
-- full-screen terminal interface
-- input history, transcript scrolling, and slash command menu
-- discoverable local skills via `SKILL.md`
-- dynamic MCP tool loading over stdio
-- MCP resources and prompts via generic MCP helper tools
+- 单轮支持多步工具执行
+- `model -> tool -> model` 闭环
+- 全屏终端交互界面
+- 输入历史、transcript 滚动和 slash 命令菜单
+- 支持通过 `SKILL.md` 发现本地 skills
+- 支持通过 stdio 动态加载 MCP tools
+- 支持通过通用 MCP helper tools 访问 resources 和 prompts
 
-### Built-in tools
+### 内置工具
 
 - `list_files`
 - `grep_files`
@@ -99,31 +99,30 @@ MiniCode is a good fit if you want:
 - `list_mcp_prompts`
 - `get_mcp_prompt`
 
-### Safety and usability
+### 安全性与可用性
 
-- review-before-write flow for file modifications
-- path and command permission checks
-- local installer with independent config storage
-- support for Anthropic-style API endpoints
+- 文件修改前先 review diff
+- 路径和命令权限检查
+- 独立配置目录和交互式安装器
+- 支持 Anthropic 风格接口
 
-### Recent interaction upgrades
+### 最近交互改进
 
-- approval prompts now use Up/Down selection with Enter confirm
-- approval prompts also support direct letter/number shortcuts shown in each option
-- supports "reject with guidance" to send corrective instructions back to the model
-- edit approvals support "allow this file for this turn" and "allow all edits for this turn"
-- file review now uses standard unified diff output (closer to `git diff`)
-- approval view supports `Ctrl+O` expand/collapse plus wheel/page scrolling
-- `Ctrl+C` now exits cleanly even when an approval prompt is open
-- finished tool calls auto-collapse into concise summaries to reduce transcript noise
-- explicit background shell commands launched through `run_command` are now surfaced as lightweight shell tasks instead of remaining stuck as a forever-running tool call
-- TTY input handling is serialized, and CRLF Enter sequences are normalized so approval confirms do not accidentally fire twice
-- fixed an input-event deadlock where approval prompts could stop accepting Up/Down/Enter
-- escape-sequence parsing is hardened so malformed terminal input does not stall key handling
-- `run_command` now accepts single-string invocations like `"git status"` and auto-splits args
-- clarifying questions are now structured via `ask_user`, and the turn pauses until the user replies
+- 审批对话支持上下键选择与 Enter 确认，也支持选项上的字母/数字快捷键
+- 支持"拒绝并给模型反馈"，可直接把修正建议发回模型
+- 编辑审批支持"本轮允许此文件"与"本轮允许全部编辑"
+- diff 预览改为标准 unified diff（更接近 `git diff`）
+- 审批页面支持 `Ctrl+O` 展开/收起与滚轮/分页滚动
+- 审批弹窗打开时也支持 `Ctrl+C` 干净退出
+- 工具调用结果自动折叠为摘要，减少 transcript 噪音
+- 通过 `run_command` 启动的显式后台 shell 命令，现在会以轻量 shell task 的形式呈现，不再卡成一个永远 running 的普通工具调用
+- TTY 输入事件现在串行处理，并且会把 CRLF 的 Enter 合并成一次确认，避免审批弹窗被重复触发
+- 修复了审批阶段可能导致上下键/Enter 无响应的输入事件死锁问题
+- 加固 ESC 序列解析，异常终端输入不会再卡住按键处理
+- `run_command` 支持 `"git status"` 这类单字符串命令输入，并自动拆分参数
+- 澄清问题改为通过 `ask_user` 结构化发问，并在用户回复前暂停当前回合
 
-## Installation
+## 安装
 
 ```bash
 cd mini-code
@@ -131,50 +130,50 @@ npm install
 npm run install-local
 ```
 
-The installer will ask for:
+安装器会询问：
 
-- model name
+- 模型名称
 - `ANTHROPIC_BASE_URL`
 - `ANTHROPIC_AUTH_TOKEN`
 
-Configuration is stored in:
+配置保存在：
 
 - `~/.mini-code/settings.json`
 - `~/.mini-code/mcp.json`
 
-The launcher is installed to:
+启动命令安装到：
 
 - `~/.local/bin/minicode`
 
-If `~/.local/bin` is not already on your `PATH`, add:
+如果 `~/.local/bin` 不在你的 `PATH` 中，可以添加：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## Quick Start
+## 快速开始
 
-Run the installed launcher:
+运行安装后的命令：
 
 ```bash
 minicode
 ```
 
-Run in development mode:
+本地开发模式：
 
 ```bash
 npm run dev
 ```
 
-Run in offline demo mode:
+离线演示模式：
 
 ```bash
 MINI_CODE_MODEL_MODE=mock npm run dev
 ```
 
-## Commands
+## 命令
 
-### Management commands
+### 管理命令
 
 - `minicode mcp list`
 - `minicode mcp add <name> [--project] [--protocol <mode>] [--env KEY=VALUE ...] -- <command> [args...]`
@@ -183,7 +182,7 @@ MINI_CODE_MODEL_MODE=mock npm run dev
 - `minicode skills add <path> [--name <name>] [--project]`
 - `minicode skills remove <name> [--project]`
 
-### Local slash commands
+### 本地 slash 命令
 
 - `/help`
 - `/tools`
@@ -195,17 +194,17 @@ MINI_CODE_MODEL_MODE=mock npm run dev
 - `/config-paths`
 - `/clear`
 
-### Terminal interaction
+### 终端交互能力
 
-- command suggestions and slash menu
-- transcript scrolling
-- prompt editing
-- input history navigation
-- approval selection and feedback input flow (Up/Down + Enter, or key shortcuts)
+- 命令提示与 slash 菜单
+- transcript 滚动
+- 输入编辑
+- 历史输入导航
+- 审批界面上下键选择与反馈输入（也支持快捷键直接选择）
 
-## Configuration
+## 配置
 
-Example configuration:
+配置示例：
 
 ```json
 {
@@ -224,7 +223,7 @@ Example configuration:
 }
 ```
 
-Project-scoped MCP config is also supported through Claude Code compatible `.mcp.json`:
+也支持 Claude Code 风格的项目级 `.mcp.json`：
 
 ```json
 {
@@ -237,213 +236,214 @@ Project-scoped MCP config is also supported through Claude Code compatible `.mcp
 }
 ```
 
-For vendor compatibility, MiniCode now auto-negotiates stdio framing:
+为了兼容不同厂商的 MCP 实现，MiniCode 现在会自动协商 stdio framing：
 
-- standard MCP `Content-Length` framing is tried first
-- if that fails, MiniCode falls back to newline-delimited JSON
-- you can force a mode per server with `"protocol": "content-length"` or `"protocol": "newline-json"`
+- 默认先尝试标准 MCP 的 `Content-Length` framing
+- 如果失败，再自动回退到按行分隔的 JSON
+- 也可以在单个 server 上通过 `"protocol": "content-length"` 或 `"protocol": "newline-json"` 强制指定
 
-Skills are discovered from:
+Skills 默认会从这些位置发现：
 
 - `./.mini-code/skills/<skill-name>/SKILL.md`
 - `~/.mini-code/skills/<skill-name>/SKILL.md`
 - `./.claude/skills/<skill-name>/SKILL.md`
 - `~/.claude/skills/<skill-name>/SKILL.md`
 
-Configuration priority:
+配置优先级：
 
 1. `~/.mini-code/settings.json`
 2. `~/.mini-code/mcp.json`
-3. project `.mcp.json`
-4. compatible existing local settings
-5. process environment variables
+3. 项目级 `.mcp.json`
+4. 兼容的本地已有配置
+5. 当前进程环境变量
 
-## Skills and MCP Usage
+## Skills 与 MCP 用法
 
-MiniCode supports two extension layers:
+MiniCode 现在支持两类扩展：
 
-- `skills`: local workflow instructions, usually described by a `SKILL.md`
-- `MCP`: external tool providers that expose tools, resources, and prompts into MiniCode
+- `skills`：本地工作流说明，一般由一个 `SKILL.md` 描述如何完成某类任务
+- `MCP`：外部工具源，启动后会把远端 server 暴露的 tools / resources / prompts 接入 MiniCode
 
-### Skills: install, inspect, trigger
+### Skills：安装、查看、触发
 
-Install a local skill:
+安装一个本地 skill：
 
 ```bash
 minicode skills add ~/minimax-skills/skills/frontend-dev --name frontend-dev
 ```
 
-List installed or discovered skills:
+查看已发现的 skills：
 
 ```bash
 minicode skills list
 ```
 
-Inside the interactive UI, you can also run:
+进入交互界面后，也可以用：
 
 ```text
 /skills
 ```
 
-to inspect which skills are available in the current session.
+来检查当前会话里可用的 skills。
 
-If you explicitly mention a skill name, MiniCode will prefer loading it. For example:
-
-```text
-Use the frontend-dev skill and directly rebuild the current landing page instead of stopping at a plan.
-```
-
-If you want to be even more explicit:
+如果你明确提到 skill 名，MiniCode 会优先加载它。比如：
 
 ```text
-Load the fullstack-dev skill first, then follow its workflow to implement this task.
+请使用 frontend-dev skill，直接重构当前 landing page，不要只停在方案说明。
 ```
 
-A common pattern is to clone an official or Claude Code-compatible skills repo locally and install from there:
+也可以更明确地要求先读 skill：
+
+```text
+先加载 fullstack-dev skill，再根据这个 skill 的工作流实现当前需求。
+```
+
+一个常见用法是把官方或兼容 Claude Code 的 skills 仓库 clone 到本地后再安装：
 
 ```bash
 git clone https://github.com/MiniMax-AI/skills.git ~/minimax-skills
 minicode skills add ~/minimax-skills/skills/frontend-dev --name frontend-dev
 ```
 
-### MCP: install, inspect, trigger
+### MCP：安装、查看、触发
 
-Install a user-scoped MCP server:
+安装一个用户级 MCP server：
 
 ```bash
 minicode mcp add MiniMax --env MINIMAX_API_KEY=your-key --env MINIMAX_API_HOST=https://api.minimaxi.com -- uvx minimax-coding-plan-mcp -y
 ```
 
-List configured MCP servers:
+查看当前已配置的 MCP：
 
 ```bash
 minicode mcp list
 ```
 
-To configure an MCP server only for the current project, add `--project`:
+如果你想只给当前项目配置 MCP，可以加 `--project`：
 
 ```bash
 minicode mcp add filesystem --project -- npx -y @modelcontextprotocol/server-filesystem .
 minicode mcp list --project
 ```
 
-Inside the interactive UI, run:
+进入交互界面后，可以用：
 
 ```text
 /mcp
 ```
 
-to see which servers are connected, which protocol they negotiated, and how many tools / resources / prompts they expose.
+查看当前会话里哪些 server 已连接、用了什么协议、暴露了多少 tools / resources / prompts。
 
-MCP tools are automatically registered as:
+MCP tools 会自动注册成：
 
 ```text
 mcp__<server_name>__<tool_name>
 ```
 
-For example, after connecting the MiniMax MCP server you may see:
+例如安装 MiniMax MCP 后，你可能会看到：
 
 - `mcp__minimax__web_search`
 - `mcp__minimax__understand_image`
 
-These tool names are not hand-written in MiniCode. They appear automatically after a successful MCP connection.
+这些工具不需要手动声明，server 连接成功后会自动出现在工具列表中。
 
-### How to use them in chat
+### 在对话里怎么用
 
-The simplest approach is to just describe the task naturally and let the model decide when to use a skill or MCP tool:
-
-```text
-Search for recent Chinese-language resources about MCP and give me 5 representative links.
-```
-
-If MiniMax MCP is connected, the model will typically choose `mcp__minimax__web_search`.
-
-If you want a more controlled workflow, name the skill or target capability explicitly:
+最简单的方式是直接自然语言描述需求，让模型自己决定是否调用 skill 或 MCP tool：
 
 ```text
-Use the frontend-dev skill and directly modify the current project files to turn this page into a more complete product landing page.
+搜索一下最近关于 MCP 的中文资料，给我 5 条有代表性的链接。
 ```
 
-Or:
+如果当前已连接 MiniMax MCP，模型通常会自动选择 `mcp__minimax__web_search`。
+
+如果你想更稳一些，可以把 skill 或目标写清楚：
 
 ```text
-Use the connected MCP tools to search for the MiniMax MCP guide and summarize what capabilities it provides.
+请使用 frontend-dev skill，直接修改当前项目文件，把页面重做成更完整的产品落地页。
 ```
 
-### When to use skills vs MCP
+或者：
 
-- `skills` are better for workflow, conventions, domain-specific instructions, and reusable execution patterns
-- `MCP` is better for search, image understanding, browsers, filesystems, databases, and other remote capabilities
+```text
+请使用已连接的 MCP 工具帮我搜索 MiniMax MCP guide，并总结它提供了哪些能力。
+```
 
-A common combination is:
+### 什么时候用 skills，什么时候用 MCP
 
-- use a skill such as `frontend-dev` to shape how the work should be done
-- use MCP to provide external search, image understanding, or system integrations
+- `skills` 更适合沉淀工作流、规范、领域经验
+- `MCP` 更适合接入搜索、图片理解、外部系统、数据库、浏览器、文件系统等远端能力
 
-### Compatibility notes
+一个常见组合是：
 
-MiniCode currently focuses on:
+- 用 `frontend-dev` 这类 skill 约束页面改造方式
+- 再让已连接的 MCP 提供搜索、图片理解或其他外部能力
 
-- local `SKILL.md` discovery with `load_skill`
-- stdio MCP servers
+### 兼容性说明
+
+MiniCode 当前主要支持：
+
+- 本地 `SKILL.md` 发现与 `load_skill`
+- stdio MCP server
 - MCP tools
-- generic helper tools for MCP resources and prompts
+- MCP resources / prompts 的通用 helper tools
 
-For vendor compatibility, MiniCode automatically tries:
+为了兼容不同厂商实现，MiniCode 会自动尝试：
 
-- standard `Content-Length` framing
-- then falls back to `newline-json` if needed
+- 标准 `Content-Length` framing
+- 失败后回退到 `newline-json`
 
-That means servers such as MiniMax MCP, which use newline-delimited JSON over stdio, can still be connected directly.
+所以像 MiniMax 这类采用按行 JSON 的 MCP server，也可以直接接入。
 
-## Star History
+## Star 趋势
 
-<a href="https://www.star-history.com/?repos=LiuMengxuan04%2FMiniCode&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=LiuMengxuan04/MiniCode&type=date&theme=dark&legend=bottom-right" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=LiuMengxuan04/MiniCode&type=date&legend=bottom-right" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=LiuMengxuan04/MiniCode&type=date&legend=bottom-right" />
- </picture>
-</a>
+<p align="center">
+  <a href="https://star-history.com/#LiuMengxuan04/MiniCode&Date">
+    <img
+      alt="Star History Chart"
+      src="https://api.star-history.com/image?repos=LiuMengxuan04/MiniCode&style=landscape1"
+    />
+  </a>
+</p>
 
-## Learn Claude Code Design Through MiniCode
+## 通过 MiniCode 学习 Claude Code 设计
 
-If you want to study the project as a learning resource, continue with:
+如果你想把这个项目当成学习材料，可以继续阅读：
 
-- [What Claude Code Design Ideas You Can Learn Through MiniCode](./CLAUDE_CODE_PATTERNS.md)
+- [通过 MiniCode 你可以学习到 Claude Code 的哪些设计](./CLAUDE_CODE_PATTERNS_ZH.md)
 
-## Project Structure
+## 项目结构
 
-- `src/index.ts`: CLI entry
-- `src/agent-loop.ts`: multi-step model/tool loop
-- `src/tool.ts`: tool registry and execution
-- `src/skills.ts`: local skill discovery and loading
-- `src/mcp.ts`: stdio MCP client and dynamic tool wrapping
-- `src/manage-cli.ts`: top-level `minicode mcp` / `minicode skills` management commands
-- `src/tools/*`: built-in tools
-- `src/tui/*`: terminal UI modules
-- `src/config.ts`: runtime configuration loading
-- `src/install.ts`: interactive installer
+- `src/index.ts`: CLI 入口
+- `src/agent-loop.ts`: 多步模型/工具循环
+- `src/tool.ts`: 工具注册与执行
+- `src/skills.ts`: 本地 skill 发现与加载
+- `src/mcp.ts`: stdio MCP 客户端与动态工具封装
+- `src/manage-cli.ts`: 顶层 `minicode mcp` / `minicode skills` 管理命令
+- `src/tools/*`: 内置工具集合
+- `src/tui/*`: 终端 UI 模块
+- `src/config.ts`: 运行时配置加载
+- `src/install.ts`: 交互式安装器
 
-## Architecture Docs
+## 架构文档
 
 - [Architecture Overview](./docs/ARCHITECTURE.md)
 - [中文架构说明](./docs/ARCHITECTURE.zh-CN.md)
 
-## Contributing
+## 贡献规范
 
-- [Contribution Guidelines](./CONTRIBUTING.md)
 - [中文贡献规范](./CONTRIBUTING_ZH.md)
+- [Contribution Guidelines](./CONTRIBUTING.md)
 
-## Roadmap
+## 路线图
 
-- [Roadmap](./ROADMAP.md)
 - [路线图（中文）](./ROADMAP_ZH.md)
+- [Roadmap](./ROADMAP.md)
 
-## Development
+## 开发说明
 
 ```bash
 npm run check
 ```
 
-MiniCode is intentionally small and pragmatic. The goal is to keep the architecture understandable, hackable, and easy to extend.
+MiniCode 有意保持小而实用。目标是让整体架构足够清晰、易改造、易扩展。

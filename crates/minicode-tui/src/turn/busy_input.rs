@@ -230,6 +230,16 @@ pub(crate) fn handle_busy_event(state: &mut ScreenState, event: Event) -> BusyEv
                 _ => {}
             }
         }
+        Event::Paste(text) => {
+            // 多行粘贴：将换行符保持为文本，而非提交键
+            for ch in text.chars() {
+                let at = state.cursor_offset.min(char_len(&state.input));
+                insert_char_at(&mut state.input, at, ch);
+                state.cursor_offset = at + 1;
+            }
+            state.selected_slash_index = 0;
+            state.history_index = state.history.len();
+        }
         _ => {}
     }
     BusyEventAction::None
