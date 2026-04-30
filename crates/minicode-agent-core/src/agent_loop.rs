@@ -17,8 +17,10 @@ pub trait AgentTurnCallbacks: Send {
     fn on_assistant_message(&mut self, _content: &str) {}
     /// 助手给出进度消息时触发。
     fn on_progress_message(&mut self, _content: &str) {}
-    /// 上下文自动压缩时触发。
+    /// 上下文自动压缩时触发（压缩完成后）。
     fn on_compact(&mut self, _summary: &str) {}
+    /// 上下文压缩开始时触发，用于显示进度提示。
+    fn on_compact_start(&mut self) {}
     /// 流式输出文本块时触发。
     fn on_stream_chunk(&mut self, _delta: &str, _is_final: bool) {}
 }
@@ -82,6 +84,9 @@ pub async fn run_agent_turn(
         if !has_context_summary {
             let estimated = estimate_context_tokens(&messages_before);
             if estimated > 128_000 {
+                if let Some(cb) = callbacks.as_deref_mut() {
+                    cb.on_compact_start();
+                }
                 let compacted = maybe_auto_compact_conversation(
                     model,
                     messages_before,
@@ -324,6 +329,9 @@ pub async fn run_agent_turn_streaming(
         if !has_context_summary {
             let estimated = estimate_context_tokens(&messages_before);
             if estimated > 128_000 {
+                if let Some(cb) = callbacks.as_deref_mut() {
+                    cb.on_compact_start();
+                }
                 let compacted = maybe_auto_compact_conversation(
                     model,
                     messages_before,

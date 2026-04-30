@@ -51,6 +51,10 @@ pub(crate) fn apply_turn_event(state: &mut ScreenState, event: TurnEvent) -> boo
             state.status = Some("Approval required...".to_string());
             false
         }
+        TurnEvent::Status(text) => {
+            state.status = Some(text);
+            false
+        }
         TurnEvent::StreamDelta(delta, is_final) => {
             if is_final {
                 state.stream_text.clear();

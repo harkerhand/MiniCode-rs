@@ -25,6 +25,8 @@ pub(crate) enum TurnEvent {
     },
     /// 流式文本增量（delta, is_final）
     StreamDelta(String, bool),
+    /// 更新状态栏文字
+    Status(String),
     Assistant(String),
     Progress(String),
     Approval {
@@ -92,11 +94,21 @@ impl AgentTurnCallbacks for ChannelCallbacks {
         let _ = self.tx.send(TurnEvent::Progress(content.to_string()));
     }
 
+    /// 上下文压缩开始：更新状态栏。
+    fn on_compact_start(&mut self) {
+        let _ = self
+            .tx
+            .send(TurnEvent::Status("Compacting context...".to_string()));
+    }
+
     /// 上下文被压缩时通知 UI。
     fn on_compact(&mut self, _summary: &str) {
         let _ = self
             .tx
             .send(TurnEvent::Progress("上下文已自动压缩以节省 token。".to_string()));
+        let _ = self
+            .tx
+            .send(TurnEvent::Status("Thinking...".to_string()));
     }
 
     /// 流式输出文本增量。
