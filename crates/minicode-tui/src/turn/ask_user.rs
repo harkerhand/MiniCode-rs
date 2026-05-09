@@ -39,7 +39,7 @@ pub(crate) fn handle_ask_user_key(state: &mut ScreenState, key: KeyEvent) -> Ask
                 AskUserAction::None
             }
         }
-        KeyCode::Enter => {
+        KeyCode::Enter | KeyCode::Char('\r' | '\n') => {
             let selected = pending.options[pending.selected_index].clone();
             state.pending_ask_user = None;
             AskUserAction::Submit(selected)

@@ -25,7 +25,7 @@ pub(crate) fn handle_approval_key(state: &mut ScreenState, key: KeyEvent) -> boo
 
     if pending.awaiting_feedback {
         match key.code {
-            KeyCode::Enter => {
+            KeyCode::Enter | KeyCode::Char('\r' | '\n') => {
                 if let Some(tx) = pending.responder.take() {
                     let _ = tx.send(PermissionPromptResult {
                         decision: PermissionDecision::DenyWithFeedback,
@@ -69,20 +69,7 @@ pub(crate) fn handle_approval_key(state: &mut ScreenState, key: KeyEvent) -> boo
             pending.selected_index = (pending.selected_index + 1) % choices_len;
             true
         }
-        KeyCode::Char(ch) => {
-            let lower = ch.to_ascii_lowercase().to_string();
-            if let Some(idx) = pending
-                .request
-                .choices
-                .iter()
-                .position(|c| c.key.eq_ignore_ascii_case(&lower))
-            {
-                pending.selected_index = idx;
-                return true;
-            }
-            false
-        }
-        KeyCode::Enter => {
+        KeyCode::Enter | KeyCode::Char('\r' | '\n') => {
             if selected_decision == PermissionDecision::DenyWithFeedback {
                 pending.awaiting_feedback = true;
                 return true;
@@ -96,6 +83,19 @@ pub(crate) fn handle_approval_key(state: &mut ScreenState, key: KeyEvent) -> boo
             state.pending_approval = None;
             restore_status_after_approval(state);
             true
+        }
+        KeyCode::Char(ch) => {
+            let lower = ch.to_ascii_lowercase().to_string();
+            if let Some(idx) = pending
+                .request
+                .choices
+                .iter()
+                .position(|c| c.key.eq_ignore_ascii_case(&lower))
+            {
+                pending.selected_index = idx;
+                return true;
+            }
+            false
         }
         KeyCode::Esc => {
             if let Some(tx) = pending.responder.take() {

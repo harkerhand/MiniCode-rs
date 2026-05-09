@@ -170,7 +170,7 @@ pub async fn run_tui_app() -> Result<()> {
 
                     match key {
                         KeyEvent {
-                            code: KeyCode::Enter,
+                            code: KeyCode::Enter | KeyCode::Char('\r' | '\n'),
                             ..
                         } => {
                             if state.is_busy {

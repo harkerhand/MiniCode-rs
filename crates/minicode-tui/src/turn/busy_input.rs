@@ -56,7 +56,7 @@ pub(crate) fn handle_busy_event(state: &mut ScreenState, event: Event) -> BusyEv
             let visible_commands = get_visible_commands(&state.input);
             match key {
                 KeyEvent {
-                    code: KeyCode::Enter,
+                    code: KeyCode::Enter | KeyCode::Char('\r' | '\n'),
                     ..
                 } => {
                     if !visible_commands.is_empty() {
