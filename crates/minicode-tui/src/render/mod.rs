@@ -253,7 +253,9 @@ pub(crate) fn render_screen(
         } else if let Some(pending) = &state.pending_approval {
             let popup = centered_rect(70, 45, area);
             frame.render_widget(Clear, popup);
-            let lines = build_approval_lines(pending);
+            let (lines, selected_line) = build_approval_lines(pending);
+            let inner_height = popup.height.saturating_sub(2) as u16;
+            let scroll = selected_line.saturating_sub(inner_height.saturating_sub(2));
             let dialog = Paragraph::new(lines)
                 .block(
                     Block::default()
@@ -262,7 +264,8 @@ pub(crate) fn render_screen(
                         .border_type(BorderType::Rounded)
                         .style(theme.approval_style()),
                 )
-                .wrap(Wrap { trim: true });
+                .wrap(Wrap { trim: true })
+                .scroll((scroll, 0));
             frame.render_widget(dialog, popup);
         }
 

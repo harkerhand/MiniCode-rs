@@ -73,6 +73,7 @@ fn update_session_index(cwd: impl AsRef<Path>, metadata: &SessionMetadata) -> Re
     {
         entry.ended_at = metadata.ended_at.clone();
         entry.turn_count = metadata.user_input_count;
+        entry.model = metadata.model.clone();
         entry.status = metadata.status.clone();
     } else {
         index.sessions.push(SessionIndexEntry {

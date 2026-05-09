@@ -26,8 +26,8 @@ fn truncate_for_dialog(input: &str, max_chars: usize) -> String {
     format!("{kept}...")
 }
 
-/// 构建权限审批弹窗的渲染文本行。
-pub(super) fn build_approval_lines(pending: &PendingApproval) -> Vec<Line<'static>> {
+/// 构建权限审批弹窗的渲染文本行，返回 (行列表, 选中项所在行索引)。
+pub(super) fn build_approval_lines(pending: &PendingApproval) -> (Vec<Line<'static>>, u16) {
     let theme = theme();
     let kind = match pending.request.kind {
         PermissionPromptKind::Path => "PATH",
@@ -64,6 +64,7 @@ pub(super) fn build_approval_lines(pending: &PendingApproval) -> Vec<Line<'stati
         truncate_for_dialog(&sanitize_line(&pending.request.scope), MAX_SCOPE_CHARS)
     )));
     lines.push(Line::from(""));
+    let first_choice_line = lines.len();
     for (idx, choice) in pending.request.choices.iter().enumerate() {
         let selected = idx == pending.selected_index;
         let color = match choice.decision {
@@ -95,6 +96,7 @@ pub(super) fn build_approval_lines(pending: &PendingApproval) -> Vec<Line<'stati
             ),
         ]));
     }
+    let selected_line = first_choice_line as u16 + pending.selected_index as u16;
 
     if pending.awaiting_feedback {
         lines.push(Line::from(""));
@@ -111,5 +113,5 @@ pub(super) fn build_approval_lines(pending: &PendingApproval) -> Vec<Line<'stati
         "Arrow/Tab to move, number key to pick, Enter confirm, Esc deny",
         Style::default().fg(Color::DarkGray),
     )));
-    lines
+    (lines, selected_line)
 }
