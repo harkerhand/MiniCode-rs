@@ -3,13 +3,14 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{self};
-use minicode_agent_core::run_agent_turn_streaming;
+use minicode_agent_core::{maybe_auto_compact_conversation, run_agent_turn_streaming};
 use minicode_cli_commands::{find_matching_slash_commands, try_handle_local_command};
 use minicode_history::{
     add_history_entry, append_runtime_message, estimate_context_tokens, load_history_entries,
     runtime_messages,
 };
 use minicode_permissions::get_permission_manager;
+use minicode_prompt::build_system_prompt;
 use minicode_tool::{get_tool_registry, parse_local_tool_shortcut};
 use minicode_types::{ChatMessage, get_model_adapter};
 use ratatui::Terminal;
@@ -100,6 +101,109 @@ fn flush_queued_busy_inputs(state: &mut ScreenState) {
     }
 }
 
+/// 异步处理 /compact 命令：先更新 UI 显示压缩中，再后台执行压缩。
+async fn handle_compact_command(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    state: &mut ScreenState,
+    input: &str,
+) -> Result<bool> {
+    append_runtime_message(ChatMessage::runtime_display(
+        "command",
+        format!("> {input}"),
+    ));
+
+    // 立即更新 UI 状态
+    state.is_busy = true;
+    state.status = Some("压缩上下文中...".to_string());
+    render_screen(terminal, state)?;
+
+    // 收集当前消息（不含 system）
+    let messages_without_system = minicode_history::runtime_messages_for_context();
+    let mut messages = Vec::with_capacity(messages_without_system.len() + 1);
+    messages.push(ChatMessage::System {
+        content: build_system_prompt(),
+    });
+    messages.extend(messages_without_system);
+
+    let count_before = messages.len();
+    let model = get_model_adapter();
+
+    // spawn 后台任务执行压缩
+    let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
+    tokio::spawn(async move {
+        let compacted = maybe_auto_compact_conversation(
+            model.as_ref(),
+            messages,
+            Some(0), // 强制压缩，不检查阈值
+            Some(2), // 保留最近 2 条
+            None::<&(dyn Fn(&str) + Send + Sync)>,
+        )
+        .await;
+
+        if compacted.len() < count_before {
+            let arc = minicode_history::get_messages();
+            let mut guard = match arc.lock() {
+                Ok(g) => g,
+                Err(e) => e.into_inner(),
+            };
+            let system_msgs: Vec<ChatMessage> = guard
+                .iter()
+                .filter(|m| matches!(m, ChatMessage::System { .. }))
+                .cloned()
+                .collect();
+            guard.clear();
+            guard.extend(system_msgs);
+            for msg in &compacted {
+                if !matches!(msg, ChatMessage::System { .. }) {
+                    guard.push(msg.clone());
+                }
+            }
+            drop(guard);
+            minicode_history::persist_current_messages();
+            let _ = tx.send(TurnEvent::Progress(format!(
+                "上下文已压缩：{} 条消息 -> {} 条",
+                count_before,
+                compacted.len()
+            )));
+        } else {
+            let _ = tx.send(TurnEvent::Progress(
+                "当前上下文较短，无需压缩。".to_string(),
+            ));
+        }
+        let _ = tx.send(TurnEvent::Done);
+    });
+
+    // 事件循环：等待压缩完成，同时保持 UI 响应
+    let mut turn_done = false;
+    while !turn_done {
+        while let Ok(event) = rx.try_recv() {
+            if apply_turn_event(state, event) {
+                turn_done = true;
+            }
+        }
+        render_screen(terminal, state)?;
+        if !turn_done && event::poll(Duration::from_millis(UI_POLL_MS))? {
+            let input_event = event::read()?;
+            match handle_busy_event(state, input_event) {
+                BusyEventAction::None => {}
+                BusyEventAction::Submit(raw) => queue_busy_submission(state, raw).await,
+                BusyEventAction::Interrupt => {
+                    // 压缩无法中断，但可以标记完成
+                    turn_done = true;
+                }
+            }
+            render_screen(terminal, state)?;
+        }
+    }
+
+    state.is_busy = false;
+    state.status = None;
+    state.context_tokens_estimate = estimate_context_tokens(&minicode_history::runtime_messages());
+    state.transcript_scroll_offset = 0;
+    render_screen(terminal, state)?;
+    Ok(false)
+}
+
 /// 处理用户提交：本地命令、快捷工具或模型回合。
 pub(crate) async fn handle_submit(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
@@ -113,6 +217,11 @@ pub(crate) async fn handle_submit(
     }
     if input == "/exit" {
         return Ok(true);
+    }
+
+    // /compact 需要异步执行，避免阻塞 UI
+    if input == "/compact" || input.starts_with("/compact ") {
+        return handle_compact_command(terminal, state, &input).await;
     }
 
     if input.starts_with('/') {
@@ -214,8 +323,7 @@ pub(crate) async fn handle_submit(
     });
     let mut task = tokio::spawn(async move {
         let mut callbacks = ChannelCallbacks { tx: tx.clone() };
-        run_agent_turn_streaming(model.as_ref(), None, Some(&mut callbacks), Some(stream_tx))
-            .await;
+        run_agent_turn_streaming(model.as_ref(), None, Some(&mut callbacks), Some(stream_tx)).await;
         let _ = tx.send(TurnEvent::Done);
     });
 
