@@ -250,6 +250,202 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
             })
         },
     },
+    SlashCommand {
+        prefix: "/resume",
+        usage: "/resume [session-id]",
+        description: "恢复之前的会话。",
+        handler: |input| {
+            let session_id = input.trim_start_matches("/resume").trim().to_string();
+            Box::pin(async move {
+                let cwd = minicode_config::runtime_store().cwd.clone();
+
+                if session_id.is_empty() {
+                    // 交互式选择
+                    let sessions = minicode_history::load_sessions(&cwd)?;
+                    if sessions.sessions.is_empty() {
+                        return Ok("没有可恢复的会话。".to_string());
+                    }
+
+                    let items: Vec<(String, String, usize, String)> = sessions
+                        .sessions
+                        .iter()
+                        .map(|s| {
+                            let created = s.created_at.chars().take(19).collect::<String>();
+                            let model = s.model.as_deref().unwrap_or("—").to_string();
+                            (s.session_id.clone(), created, s.turn_count, model)
+                        })
+                        .collect();
+
+                    let selected = minicode_history::interactive_select(
+                        items,
+                        |idx, (id, created, turns, model)| {
+                            format!(
+                                "{:<2} {:<18} {:<20} {:<6} {:<30}",
+                                idx,
+                                &id[..id.len().min(16)],
+                                created,
+                                turns,
+                                model
+                            )
+                        },
+                        "选择要恢复的会话: ",
+                    )?;
+
+                    if let Some((id, _, _, _)) = selected {
+                        // 加载会话
+                        let messages = minicode_history::load_session_messages(&cwd, &id)?;
+                        minicode_history::clear_runtime_messages();
+                        for msg in messages {
+                            minicode_history::append_runtime_message(msg);
+                        }
+                        return Ok(format!("已恢复会话: {}", id));
+                    }
+
+                    return Ok("已取消。".to_string());
+                }
+
+                // 直接恢复指定会话
+                let messages = minicode_history::load_session_messages(&cwd, &session_id)?;
+                minicode_history::clear_runtime_messages();
+                for msg in messages {
+                    minicode_history::append_runtime_message(msg);
+                }
+                Ok(format!("已恢复会话: {}", session_id))
+            })
+        },
+    },
+    SlashCommand {
+        prefix: "/rename",
+        usage: "/rename <new-name>",
+        description: "重命名当前会话。",
+        handler: |input| {
+            let new_name = input.trim_start_matches("/rename").trim().to_string();
+            Box::pin(async move {
+                if new_name.is_empty() {
+                    return Err(anyhow::anyhow!("请提供新名称。用法: /rename <new-name>"));
+                }
+
+                let cwd = minicode_config::runtime_store().cwd.clone();
+                let session_id = minicode_config::runtime_store().session_id.clone();
+
+                minicode_history::rename_session(&cwd, &session_id, &new_name)?;
+
+                Ok(format!("会话已重命名为: {}", new_name))
+            })
+        },
+    },
+    SlashCommand {
+        prefix: "/fork",
+        usage: "/fork [session-id]",
+        description: "Fork 当前或指定会话为新会话。",
+        handler: |input| {
+            let session_id = input.trim_start_matches("/fork").trim().to_string();
+            Box::pin(async move {
+                let cwd = minicode_config::runtime_store().cwd.clone();
+
+                let source_id = if session_id.is_empty() {
+                    minicode_config::runtime_store().session_id.clone()
+                } else {
+                    session_id
+                };
+
+                // 加载源会话
+                let source_messages =
+                    minicode_history::load_session_messages(&cwd, &source_id)?;
+
+                // 创建新会话
+                let new_session_id = minicode_history::generate_session_id();
+                let mut new_messages = source_messages.clone();
+
+                // 添加 fork 标记
+                new_messages.push(minicode_types::ChatMessage::Runtime {
+                    kind: "fork".to_string(),
+                    content: format!("Forked from session: {}", source_id),
+                    flags: minicode_types::MessageFlags::recorded_context_display(),
+                });
+
+                // 保存新会话
+                minicode_history::save_session_messages(&cwd, &new_session_id, &new_messages)?;
+
+                // 切换到新会话
+                minicode_history::clear_runtime_messages();
+                for msg in new_messages {
+                    minicode_history::append_runtime_message(msg);
+                }
+
+                Ok(format!(
+                    "已 fork 会话 {} -> {}",
+                    source_id, new_session_id
+                ))
+            })
+        },
+    },
+    SlashCommand {
+        prefix: "/init",
+        usage: "/init",
+        description: "初始化项目配置（创建 .mini-code/ 目录和 MINI.md）。",
+        handler: |_| {
+            Box::pin(async move {
+                let cwd = minicode_config::runtime_store().cwd.clone();
+                let mini_code_dir = cwd.join(".mini-code");
+                let skills_dir = mini_code_dir.join("skills");
+                let rules_dir = mini_code_dir.join("rules");
+                let mini_md = cwd.join("MINI.md");
+                let gitignore = cwd.join(".gitignore");
+
+                // 创建目录
+                std::fs::create_dir_all(&mini_code_dir)?;
+                std::fs::create_dir_all(&skills_dir)?;
+                std::fs::create_dir_all(&rules_dir)?;
+
+                // 创建 MINI.md（如果不存在）
+                if !mini_md.exists() {
+                    let template = detect_project_template(&cwd);
+                    std::fs::write(&mini_md, template)?;
+                }
+
+                // 更新 .gitignore
+                if gitignore.exists() {
+                    let content = std::fs::read_to_string(&gitignore)?;
+                    if !content.contains(".mini-code/sessions") {
+                        std::fs::write(
+                            &gitignore,
+                            format!(
+                                "{}\n\n# MiniCode sessions\n.mini-code/sessions/\n",
+                                content
+                            ),
+                        )?;
+                    }
+                } else {
+                    std::fs::write(
+                        &gitignore,
+                        "# MiniCode sessions\n.mini-code/sessions/\n",
+                    )?;
+                }
+
+                Ok(format!(
+                    "项目已初始化：\n  - {}\n  - {}\n  - {}\n  - {}",
+                    mini_code_dir.display(),
+                    skills_dir.display(),
+                    rules_dir.display(),
+                    mini_md.display()
+                ))
+            })
+        },
+    },
+    SlashCommand {
+        prefix: "/memory",
+        usage: "/memory",
+        description: "显示已加载的指令文件。",
+        handler: |_| {
+            Box::pin(async move {
+                let cwd = minicode_config::runtime_store().cwd.clone();
+                let home = dirs::home_dir().unwrap_or_default();
+
+                Ok(minicode_prompt::render_memory_report(&cwd, &home))
+            })
+        },
+    },
 ];
 
 /// 格式化所有内置斜杠命令的帮助文本。
@@ -287,4 +483,42 @@ pub async fn try_handle_local_command(input: &str) -> Result<Option<String>> {
         }
     }
     Ok(None)
+}
+
+/// 检测项目技术栈并生成模板
+fn detect_project_template(cwd: &std::path::Path) -> String {
+    let mut template = String::from("# Project Instructions\n\n");
+
+    // 检测技术栈
+    let mut stack = Vec::new();
+
+    if cwd.join("package.json").exists() {
+        stack.push("Node.js/JavaScript");
+    }
+    if cwd.join("tsconfig.json").exists() {
+        stack.push("TypeScript");
+    }
+    if cwd.join("Cargo.toml").exists() {
+        stack.push("Rust");
+    }
+    if cwd.join("pyproject.toml").exists() || cwd.join("requirements.txt").exists() {
+        stack.push("Python");
+    }
+    if cwd.join("go.mod").exists() {
+        stack.push("Go");
+    }
+    if cwd.join("pom.xml").exists() || cwd.join("build.gradle").exists() {
+        stack.push("Java");
+    }
+
+    if !stack.is_empty() {
+        template.push_str(&format!("Detected stack: {}\n\n", stack.join(", ")));
+    }
+
+    template.push_str("## Guidelines\n\n");
+    template.push_str("- Follow existing code conventions\n");
+    template.push_str("- Write tests for new features\n");
+    template.push_str("- Keep changes minimal and focused\n");
+
+    template
 }

@@ -24,7 +24,8 @@ struct ConversationFile {
     messages: Vec<ChatMessage>,
 }
 
-fn save_session_messages(
+/// 保存会话消息到文件
+pub fn save_session_messages(
     cwd: impl AsRef<Path>,
     session_id: &str,
     messages: &[ChatMessage],
@@ -41,6 +42,16 @@ fn save_session_messages(
     };
     fs::write(path, format!("{}\n", toml::to_string_pretty(&payload)?))?;
     Ok(())
+}
+
+/// 从指定会话加载消息
+pub fn load_session_messages(cwd: impl AsRef<Path>, session_id: &str) -> Result<Vec<ChatMessage>> {
+    let path = project_session_conversation_path(cwd, session_id);
+    if !path.exists() {
+        return Err(anyhow::anyhow!("会话不存在: {}", session_id));
+    }
+    let messages: ConversationFile = read_toml_file(path).unwrap_or_default();
+    Ok(messages.messages)
 }
 
 fn persist_runtime_messages(messages: &[ChatMessage]) {

@@ -188,6 +188,13 @@ impl AnthropicModelAdapter {
                         json!({"type":"text","text":content}),
                     );
                 }
+                ChatMessage::SnipBoundary { content, .. } => {
+                    push(
+                        &mut converted,
+                        "user",
+                        json!({"type":"text","text":format!("<snip_boundary>\n{}\n</snip_boundary>", content)}),
+                    );
+                }
             }
         }
 
@@ -467,6 +474,9 @@ impl ModelAdapter for AnthropicModelAdapter {
                 ChatMessage::System { .. } => None,
                 ChatMessage::Minicode { content } => Some(format!("[minicode]\n{content}")),
                 ChatMessage::Runtime { content, .. } => Some(format!("[runtime]\n{content}")),
+                ChatMessage::SnipBoundary { content, .. } => {
+                    Some(format!("[snip boundary]\n{content}"))
+                }
             })
             .collect::<Vec<_>>()
             .join("\n\n");

@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+dirs = { workspace = true }
 minicode-agent-core = { workspace = true }
 minicode-config = { workspace = true }
 minicode-history = { workspace = true }

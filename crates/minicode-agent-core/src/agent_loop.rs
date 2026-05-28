@@ -1,4 +1,6 @@
 use crate::compact::maybe_auto_compact_conversation;
+use crate::microcompact::microcompact;
+use crate::snip_compact::snip_compact_conversation;
 use minicode_history::{
     append_runtime_message, estimate_context_tokens, get_messages, persist_current_messages,
     runtime_messages_for_context,
@@ -94,38 +96,76 @@ pub async fn run_agent_turn(
     let limit = max_steps.unwrap_or(64);
 
     for _ in 0..limit {
-        // 每轮检查是否需要自动压缩上下文
+        // 每轮检查是否需要压缩上下文
         let messages_before = get_messages_with_system();
-        let has_context_summary = messages_before
-            .iter()
-            .any(|m| matches!(m, ChatMessage::ContextSummary { .. }));
         let original_len = messages_before.len();
-        // 只有在尚未压缩过的情况下才检查（避免重复压缩）
-        if !has_context_summary {
-            let estimated = estimate_context_tokens(&messages_before);
-            if estimated > 128_000 {
+        let estimated = estimate_context_tokens(&messages_before);
+
+        // 计算上下文利用率（假设 128k 为默认窗口大小）
+        let context_window = 128_000usize;
+        let utilization = estimated as f64 / context_window as f64;
+
+        // 1. 先尝试 microcompact（轻量级，不调用模型，清理旧 tool_result）
+        let messages_after_micro = microcompact(messages_before.clone(), utilization);
+        if messages_after_micro.len() < messages_before.len()
+            || messages_after_micro
+                .iter()
+                .zip(messages_before.iter())
+                .any(|(a, b)| std::mem::discriminant(a) != std::mem::discriminant(b))
+        {
+            replace_context_messages(&messages_after_micro);
+            persist_current_messages();
+        }
+
+        // 2. 如果仍然超过阈值，尝试 snipCompact（确定性删除，不调用模型）
+        let has_snip_boundary = messages_after_micro
+            .iter()
+            .any(|m| matches!(m, ChatMessage::SnipBoundary { .. }));
+        if !has_snip_boundary && utilization >= 0.70 {
+            let snip_result = snip_compact_conversation(messages_after_micro.clone(), utilization);
+            if snip_result.did_snip {
                 if let Some(cb) = callbacks.as_deref_mut() {
                     cb.on_compact_start();
                 }
-                let compacted = maybe_auto_compact_conversation(
-                    model,
-                    messages_before,
-                    None,
-                    None,
-                    None::<&(dyn Fn(&str) + Send + Sync)>,
-                )
-                .await;
-                // 如果压缩后的消息列表不同于原始（即实际发生了压缩），替换存储
-                if compacted.len() < original_len {
-                    replace_context_messages(&compacted);
-                    persist_current_messages();
-                    if let Some(cb) = callbacks.as_deref_mut() {
-                        if let Some(ChatMessage::ContextSummary { content }) = compacted
-                            .iter()
-                            .find(|m| matches!(m, ChatMessage::ContextSummary { .. }))
-                        {
-                            cb.on_compact(content);
-                        }
+                replace_context_messages(&snip_result.messages);
+                persist_current_messages();
+                if let Some(cb) = callbacks.as_deref_mut() {
+                    cb.on_compact(&format!(
+                        "Snipped {} messages, freed ~{} tokens",
+                        snip_result.removed_count, snip_result.tokens_freed
+                    ));
+                }
+                continue; // 压缩后重新开始循环
+            }
+        }
+
+        // 3. 最后尝试 auto-compact（调用模型生成摘要）
+        let messages_after_snip = get_messages_with_system();
+        let has_context_summary = messages_after_snip
+            .iter()
+            .any(|m| matches!(m, ChatMessage::ContextSummary { .. }));
+        let estimated_after = estimate_context_tokens(&messages_after_snip);
+        if !has_context_summary && estimated_after > 128_000 {
+            if let Some(cb) = callbacks.as_deref_mut() {
+                cb.on_compact_start();
+            }
+            let compacted = maybe_auto_compact_conversation(
+                model,
+                messages_after_snip,
+                None,
+                None,
+                None::<&(dyn Fn(&str) + Send + Sync)>,
+            )
+            .await;
+            if compacted.len() < original_len {
+                replace_context_messages(&compacted);
+                persist_current_messages();
+                if let Some(cb) = callbacks.as_deref_mut() {
+                    if let Some(ChatMessage::ContextSummary { content }) = compacted
+                        .iter()
+                        .find(|m| matches!(m, ChatMessage::ContextSummary { .. }))
+                    {
+                        cb.on_compact(content);
                     }
                 }
             }
@@ -353,35 +393,76 @@ pub async fn run_agent_turn_streaming(
     let limit = max_steps.unwrap_or(64);
 
     for _ in 0..limit {
+        // 每轮检查是否需要压缩上下文
         let messages_before = get_messages_with_system();
-        let has_context_summary = messages_before
-            .iter()
-            .any(|m| matches!(m, ChatMessage::ContextSummary { .. }));
         let original_len = messages_before.len();
-        if !has_context_summary {
-            let estimated = estimate_context_tokens(&messages_before);
-            if estimated > 128_000 {
+        let estimated = estimate_context_tokens(&messages_before);
+
+        // 计算上下文利用率（假设 128k 为默认窗口大小）
+        let context_window = 128_000usize;
+        let utilization = estimated as f64 / context_window as f64;
+
+        // 1. 先尝试 microcompact（轻量级，不调用模型，清理旧 tool_result）
+        let messages_after_micro = microcompact(messages_before.clone(), utilization);
+        if messages_after_micro.len() < messages_before.len()
+            || messages_after_micro
+                .iter()
+                .zip(messages_before.iter())
+                .any(|(a, b)| std::mem::discriminant(a) != std::mem::discriminant(b))
+        {
+            replace_context_messages(&messages_after_micro);
+            persist_current_messages();
+        }
+
+        // 2. 如果仍然超过阈值，尝试 snipCompact（确定性删除，不调用模型）
+        let has_snip_boundary = messages_after_micro
+            .iter()
+            .any(|m| matches!(m, ChatMessage::SnipBoundary { .. }));
+        if !has_snip_boundary && utilization >= 0.70 {
+            let snip_result = snip_compact_conversation(messages_after_micro.clone(), utilization);
+            if snip_result.did_snip {
                 if let Some(cb) = callbacks.as_deref_mut() {
                     cb.on_compact_start();
                 }
-                let compacted = maybe_auto_compact_conversation(
-                    model,
-                    messages_before,
-                    None,
-                    None,
-                    None::<&(dyn Fn(&str) + Send + Sync)>,
-                )
-                .await;
-                if compacted.len() < original_len {
-                    replace_context_messages(&compacted);
-                    persist_current_messages();
-                    if let Some(cb) = callbacks.as_deref_mut() {
-                        if let Some(ChatMessage::ContextSummary { content }) = compacted
-                            .iter()
-                            .find(|m| matches!(m, ChatMessage::ContextSummary { .. }))
-                        {
-                            cb.on_compact(content);
-                        }
+                replace_context_messages(&snip_result.messages);
+                persist_current_messages();
+                if let Some(cb) = callbacks.as_deref_mut() {
+                    cb.on_compact(&format!(
+                        "Snipped {} messages, freed ~{} tokens",
+                        snip_result.removed_count, snip_result.tokens_freed
+                    ));
+                }
+                continue; // 压缩后重新开始循环
+            }
+        }
+
+        // 3. 最后尝试 auto-compact（调用模型生成摘要）
+        let messages_after_snip = get_messages_with_system();
+        let has_context_summary = messages_after_snip
+            .iter()
+            .any(|m| matches!(m, ChatMessage::ContextSummary { .. }));
+        let estimated_after = estimate_context_tokens(&messages_after_snip);
+        if !has_context_summary && estimated_after > 128_000 {
+            if let Some(cb) = callbacks.as_deref_mut() {
+                cb.on_compact_start();
+            }
+            let compacted = maybe_auto_compact_conversation(
+                model,
+                messages_after_snip,
+                None,
+                None,
+                None::<&(dyn Fn(&str) + Send + Sync)>,
+            )
+            .await;
+            if compacted.len() < original_len {
+                replace_context_messages(&compacted);
+                persist_current_messages();
+                if let Some(cb) = callbacks.as_deref_mut() {
+                    if let Some(ChatMessage::ContextSummary { content }) = compacted
+                        .iter()
+                        .find(|m| matches!(m, ChatMessage::ContextSummary { .. }))
+                    {
+                        cb.on_compact(content);
                     }
                 }
             }

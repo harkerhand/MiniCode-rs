@@ -85,6 +85,10 @@ fn serialize_message_for_summary(msg: &ChatMessage) -> Option<String> {
             "[runtime]\n{}",
             preview_text(content, MAX_MESSAGE_PREVIEW_CHARS)
         )),
+        ChatMessage::SnipBoundary { content, .. } => Some(format!(
+            "[snip boundary]\n{}",
+            preview_text(content, MAX_MESSAGE_PREVIEW_CHARS)
+        )),
     }
 }
 
@@ -203,6 +207,7 @@ fn estimate_message_tokens(msg: &ChatMessage) -> usize {
             tool_use_id.len().div_ceil(3) + tool_name.len().div_ceil(3) + content.len().div_ceil(3)
         }
         ChatMessage::Runtime { content, .. } => content.len().div_ceil(3),
+        ChatMessage::SnipBoundary { content, .. } => content.len().div_ceil(3),
     };
     OVERHEAD + content_tokens
 }

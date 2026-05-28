@@ -61,6 +61,16 @@ pub enum ChatMessage {
         #[serde(rename = "isError")]
         is_error: bool,
     },
+    #[serde(rename = "snip_boundary")]
+    SnipBoundary {
+        content: String,
+        #[serde(rename = "removedMessageIds")]
+        removed_message_ids: Vec<String>,
+        #[serde(rename = "removedCount")]
+        removed_count: usize,
+        #[serde(rename = "tokensFreed")]
+        tokens_freed: usize,
+    },
     #[serde(rename = "runtime")]
     Runtime {
         kind: String,
@@ -114,7 +124,9 @@ impl ChatMessage {
     pub fn flags(&self) -> MessageFlags {
         match self {
             ChatMessage::System { .. } => MessageFlags::new(MessageFlags::CONTEXT),
-            ChatMessage::Minicode { .. } | ChatMessage::ContextSummary { .. } => {
+            ChatMessage::Minicode { .. }
+            | ChatMessage::ContextSummary { .. }
+            | ChatMessage::SnipBoundary { .. } => {
                 MessageFlags::new(MessageFlags::RECORD | MessageFlags::CONTEXT)
             }
             ChatMessage::User { .. }

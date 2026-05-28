@@ -122,3 +122,31 @@ pub fn check_session(cwd: impl AsRef<Path>, session_id: &str) -> Result<()> {
     let _metadata: SessionMetadata = serde_json::from_str(&content)?;
     Ok(())
 }
+
+/// 重命名会话
+pub fn rename_session(cwd: impl AsRef<Path>, session_id: &str, new_name: &str) -> Result<()> {
+    let index_path = project_sessions_index(cwd.as_ref());
+    if !index_path.exists() {
+        return Err(anyhow::anyhow!("会话索引不存在"));
+    }
+
+    let content = fs::read_to_string(&index_path)?;
+    let mut index: SessionIndex = serde_json::from_str(&content)?;
+
+    if let Some(entry) = index
+        .sessions
+        .iter_mut()
+        .find(|e| e.session_id == session_id)
+    {
+        entry.status = format!("renamed:{}", new_name);
+    } else {
+        return Err(anyhow::anyhow!("会话不存在: {}", session_id));
+    }
+
+    fs::write(
+        &index_path,
+        format!("{}\n", serde_json::to_string_pretty(&index)?),
+    )?;
+
+    Ok(())
+}

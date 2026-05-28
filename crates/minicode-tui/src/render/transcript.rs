@@ -68,6 +68,10 @@ fn transcript_from_messages() -> Vec<TranscriptLine> {
                     None
                 }
             }
+            ChatMessage::SnipBoundary { content, .. } => Some(TranscriptLine {
+                kind: "snip".to_string(),
+                body: content,
+            }),
         })
         .collect()
 }
