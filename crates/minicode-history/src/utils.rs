@@ -25,11 +25,6 @@ pub fn list_sessions_formatted(cwd: impl AsRef<Path>, filter_opt: Option<&str>) 
             .iter()
             .filter(|entry| {
                 entry.session_id.to_lowercase().contains(&filter_lower)
-                    || entry
-                        .model
-                        .as_ref()
-                        .map(|m| m.to_lowercase().contains(&filter_lower))
-                        .unwrap_or(false)
             })
             .collect()
     } else {
@@ -46,10 +41,10 @@ pub fn list_sessions_formatted(cwd: impl AsRef<Path>, filter_opt: Option<&str>) 
     let mut output = String::new();
     output.push_str("Sessions:\n");
     output.push_str(&format!(
-        "{:<18} {:<20} {:<20} {:<8} {:<25} {:<12}\n",
-        "ID", "Created", "Ended", "Turns", "Model", "Status"
+        "{:<18} {:<20} {:<20} {:<8} {:<12}\n",
+        "ID", "Created", "Ended", "Turns", "Status"
     ));
-    output.push_str(&"-".repeat(103));
+    output.push_str(&"-".repeat(78));
     output.push('\n');
 
     for entry in filtered {
@@ -60,25 +55,13 @@ pub fn list_sessions_formatted(cwd: impl AsRef<Path>, filter_opt: Option<&str>) 
             .as_ref()
             .map(|e| &e[..e.len().min(19)])
             .unwrap_or("—");
-        let model_display = entry
-            .model
-            .as_ref()
-            .map(|m| {
-                if m.len() > 24 {
-                    format!("{}...", &m[..21])
-                } else {
-                    m.clone()
-                }
-            })
-            .unwrap_or_else(|| "—".to_string());
 
         output.push_str(&format!(
-            "{:<18} {:<20} {:<20} {:<8} {:<25} {:<12}\n",
+            "{:<18} {:<20} {:<20} {:<8} {:<12}\n",
             id_display,
             created_display,
             ended_display,
             entry.turn_count,
-            model_display,
             entry.status
         ));
     }
@@ -148,7 +131,7 @@ pub async fn resolve_and_load_session(
     } else {
         eprintln!("📋 找到 {} 个匹配的会话:", matches.len());
 
-        let items: Vec<(String, String, usize, String)> = matches
+        let items: Vec<(String, String, usize)> = matches
             .iter()
             .filter_map(|matched_id| {
                 sessions
@@ -161,14 +144,13 @@ pub async fn resolve_and_load_session(
 
         match interactive_select(
             items,
-            |idx, (id, created, turns, model)| {
+            |idx, (id, created, turns)| {
                 format!(
-                    "{:<2} {:<18} {:<20} {:<6} {:<30}",
+                    "{:<2} {:<18} {:<20} {:<6}",
                     idx,
                     &id[..id.len().min(16)],
                     created,
                     turns,
-                    model
                 )
             },
             &format!(
@@ -176,7 +158,7 @@ pub async fn resolve_and_load_session(
                 matches.len()
             ),
         )? {
-            Some((id, _, _, _)) => id,
+            Some((id, _, _)) => id,
             None => return Ok(None),
         }
     };
@@ -184,10 +166,9 @@ pub async fn resolve_and_load_session(
     Ok(Some(target_id))
 }
 
-fn session_item_to_tuple(entry: &SessionIndexEntry) -> (String, String, usize, String) {
+fn session_item_to_tuple(entry: &SessionIndexEntry) -> (String, String, usize) {
     let created = entry.created_at.chars().take(19).collect::<String>();
-    let model = entry.model.as_deref().unwrap_or("—").to_string();
-    (entry.session_id.clone(), created, entry.turn_count, model)
+    (entry.session_id.clone(), created, entry.turn_count)
 }
 
 /// 通用的交互式列表选择函数

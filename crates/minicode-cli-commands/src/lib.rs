@@ -1,7 +1,7 @@
 use anyhow::Result;
 use minicode_config::{
-    mini_code_mcp_path, mini_code_permissions_path, mini_code_settings_path, runtime_config,
-    save_minicode_settings,
+    mini_code_mcp_path, mini_code_permissions_path, mini_code_settings_path,
+    modify_runtime_config, runtime_config, save_minicode_settings,
 };
 use minicode_history::{clear_history_entries, clear_runtime_messages};
 use minicode_tool::{TOOL_COMMANDS, get_tool_registry};
@@ -74,6 +74,7 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
                 let mut runtime = runtime_config();
                 runtime.model = model.to_string();
                 save_minicode_settings(&runtime)?;
+                modify_runtime_config(runtime.clone());
                 Ok(format!("Model updated to: {}", runtime.model))
             })
         },
@@ -266,32 +267,30 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
                         return Ok("没有可恢复的会话。".to_string());
                     }
 
-                    let items: Vec<(String, String, usize, String)> = sessions
+                    let items: Vec<(String, String, usize)> = sessions
                         .sessions
                         .iter()
                         .map(|s| {
                             let created = s.created_at.chars().take(19).collect::<String>();
-                            let model = s.model.as_deref().unwrap_or("—").to_string();
-                            (s.session_id.clone(), created, s.turn_count, model)
+                            (s.session_id.clone(), created, s.turn_count)
                         })
                         .collect();
 
                     let selected = minicode_history::interactive_select(
                         items,
-                        |idx, (id, created, turns, model)| {
+                        |idx, (id, created, turns)| {
                             format!(
-                                "{:<2} {:<18} {:<20} {:<6} {:<30}",
+                                "{:<2} {:<18} {:<20} {:<6}",
                                 idx,
                                 &id[..id.len().min(16)],
                                 created,
                                 turns,
-                                model
                             )
                         },
                         "选择要恢复的会话: ",
                     )?;
 
-                    if let Some((id, _, _, _)) = selected {
+                    if let Some((id, _, _)) = selected {
                         // 加载会话
                         let messages = minicode_history::load_session_messages(&cwd, &id)?;
                         minicode_history::clear_runtime_messages();

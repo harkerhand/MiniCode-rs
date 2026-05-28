@@ -156,7 +156,7 @@ async fn handle_history_command(cwd: impl AsRef<Path>, cmd: HistoryCommand) -> R
                 eprintln!("📋 找到 {} 个匹配的会话:", matches.len());
 
                 let sessions = load_sessions(cwd.as_ref())?;
-                let items: Vec<(String, String, usize, String)> = matches
+                let items: Vec<(String, String, usize)> = matches
                     .iter()
                     .filter_map(|matched_id| {
                         sessions
@@ -165,22 +165,20 @@ async fn handle_history_command(cwd: impl AsRef<Path>, cmd: HistoryCommand) -> R
                             .find(|e| &e.session_id == matched_id)
                             .map(|entry| {
                                 let created = entry.created_at.chars().take(19).collect::<String>();
-                                let model = entry.model.as_deref().unwrap_or("—").to_string();
-                                (matched_id.clone(), created, entry.turn_count, model)
+                                (matched_id.clone(), created, entry.turn_count)
                             })
                     })
                     .collect();
 
                 match interactive_select(
                     items,
-                    |idx, (id, created, turns, model)| {
+                    |idx, (id, created, turns)| {
                         format!(
-                            "{:<2} {:<18} {:<20} {:<6} {:<30}",
+                            "{:<2} {:<18} {:<20} {:<6}",
                             idx,
                             &id[..id.len().min(16)],
                             created,
                             turns,
-                            model
                         )
                     },
                     &format!(
@@ -188,7 +186,7 @@ async fn handle_history_command(cwd: impl AsRef<Path>, cmd: HistoryCommand) -> R
                         matches.len()
                     ),
                 )? {
-                    Some((id, _, _, _)) => id,
+                    Some((id, _, _)) => id,
                     None => return Ok(true),
                 }
             };

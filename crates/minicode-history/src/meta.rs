@@ -13,7 +13,6 @@ pub struct SessionMetadata {
     pub session_id: String,
     pub created_at: String,
     pub ended_at: Option<String>,
-    pub model: Option<String>,
     pub cwd: PathBuf,
     pub turn_count: usize,
     pub user_input_count: usize,
@@ -34,7 +33,6 @@ pub struct SessionIndexEntry {
     pub ended_at: Option<String>,
     pub cwd: PathBuf,
     pub turn_count: usize,
-    pub model: Option<String>,
     pub status: String,
 }
 
@@ -73,7 +71,6 @@ fn update_session_index(cwd: impl AsRef<Path>, metadata: &SessionMetadata) -> Re
     {
         entry.ended_at = metadata.ended_at.clone();
         entry.turn_count = metadata.user_input_count;
-        entry.model = metadata.model.clone();
         entry.status = metadata.status.clone();
     } else {
         index.sessions.push(SessionIndexEntry {
@@ -82,7 +79,6 @@ fn update_session_index(cwd: impl AsRef<Path>, metadata: &SessionMetadata) -> Re
             ended_at: metadata.ended_at.clone(),
             cwd: metadata.cwd.clone(),
             turn_count: metadata.user_input_count,
-            model: metadata.model.clone(),
             status: metadata.status.clone(),
         });
     }

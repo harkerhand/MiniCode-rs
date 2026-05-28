@@ -67,26 +67,19 @@ pub async fn select_session(cwd: impl AsRef<Path>) -> Result<Option<String>> {
     // 显示最近的 10 个会话
     eprintln!("\n📋 之前的会话:");
     eprintln!(
-        "{:<3} {:<26} {:<6} {:<30}",
-        "编号", "创建时间", "回合数", "模型"
+        "{:<3} {:<26} {:<6}",
+        "编号", "创建时间", "回合数"
     );
-    eprintln!("{}", "-".repeat(80));
+    eprintln!("{}", "-".repeat(50));
 
     for (idx, entry) in sessions.sessions.iter().take(10).enumerate() {
         let created = entry.created_at.chars().take(19).collect::<String>();
-        let model = entry.model.as_deref().unwrap_or("未知");
-        let model_short = if model.len() > 25 {
-            format!("{}...", &model[..22])
-        } else {
-            model.to_string()
-        };
 
         eprintln!(
-            "{:<3} {:<26} {:<6} {:<30}",
+            "{:<3} {:<26} {:<6}",
             idx + 1,
             created,
             entry.turn_count,
-            model_short
         );
     }
 
